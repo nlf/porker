@@ -1,4 +1,4 @@
-CREATE TABLE ${queue}_jobs (
+CREATE TABLE ${queue}_jobs IF NOT EXISTS (
   id serial PRIMARY KEY,
   priority integer NOT NULL DEFAULT 0,
   started_at timestamp with time zone,
