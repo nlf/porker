@@ -1,0 +1,1 @@
+LISTEN ${queue}_jobs

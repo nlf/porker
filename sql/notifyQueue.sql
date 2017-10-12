@@ -1,0 +1,1 @@
+NOTIFY ${queue}_jobs
