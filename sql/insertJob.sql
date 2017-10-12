@@ -1,3 +1,3 @@
 INSERT INTO ${queue}_jobs
-  (args, repeat_every) VALUES ($1::jsonb, $2::interval)
+  (args, priority, repeat_every) VALUES ($1::jsonb, $2, $3::interval)
   RETURNING *
