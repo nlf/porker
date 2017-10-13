@@ -6,11 +6,15 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["postgres", "postgresql", "jobs", "worker"],
+  "keywords": [
+    "postgres",
+    "postgresql",
+    "jobs",
+    "worker"
+  ],
   "author": "Nathan LaFreniere <quitlahok@gmail.com>",
   "license": "MIT",
   "dependencies": {
-    "keyfob": "^1.0.0",
     "pg": "^7.3.0"
   }
 }
