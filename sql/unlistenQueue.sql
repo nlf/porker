@@ -1,1 +1,0 @@
-UNLISTEN ${queue}_jobs
