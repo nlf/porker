@@ -4,7 +4,7 @@
   "description": "because it's a worker, but for postgres",
   "main": "lib/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "lab -a code -t 100 -L"
   },
   "keywords": [
     "postgres",
@@ -16,5 +16,9 @@
   "license": "MIT",
   "dependencies": {
     "pg": "^7.3.0"
+  },
+  "devDependencies": {
+    "code": "^5.1.0",
+    "lab": "^14.3.1"
   }
 }
