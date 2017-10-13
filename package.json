@@ -17,6 +17,13 @@
   ],
   "author": "Nathan LaFreniere <quitlahok@gmail.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nlf/porker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nlf/porker/issues"
+  },
   "dependencies": {
     "pg": "^7.3.0"
   },
