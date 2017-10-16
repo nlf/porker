@@ -73,6 +73,14 @@ describe('Porker', () => {
         await worker.end();
     });
 
+    it('does not throw when queues have a dash', async () => {
+
+        const worker = new Porker({ database: 'porker_test_suite', queue: 'test-queue' });
+        await expect(worker.create()).to.not.reject();
+
+        await worker.end();
+    });
+
     it('can create its own table', async () => {
 
         const worker = new Porker({ database: 'porker_test_suite', queue: 'test' });
