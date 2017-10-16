@@ -5,15 +5,11 @@ A super simple job queue for Node.js (7.6 and higher, uses async functions) buil
 ### Usage
 
 
-#### `new Porker({ host, port, user, password, database, queue, errorThreshold, timeout })`
+#### `new Porker({ connection, queue, errorThreshold, timeout })`
 
 Creates and returns a new worker.
 
-- `host`: (optional) Postgres host to connect to, defaults to `localhost` or the value of `PGHOST`
-- `port`: (optional) Port to connect to on the postgres server, defaults to `5432` or the value of `PGPORT`
-- `user`: (optional) Username to connect to postgres with, defaults to current logged in user or value of `PGUSER`
-- `password`: (optional) Password for authentication to postgres, defaults to nothing or the value of `PGPASSWORD`
-- `database`: *required* Name of the database to store job queues in, must be specified here or via `PGDATABASE`
+- `connection`: (optional) Postgres connection details, passed through to [new Client](https://node-postgres.com/api/client#new-client-config-object-) in [pg](https://node-postgres.com/)
 - `queue`: *required* Name of the job queue, will be represented as a table with a name in the form of `${queue}_jobs`
 - `errorThreshold`: (optional) Maximum `error_count` a job can have to be received by this worker, defaults to `0`
 - `timeout`: (optional) Maximum time a worker function can run before a job will be flagged as an error and returned to the queue, defaults to `15000` (15 seconds)
@@ -24,10 +20,10 @@ AsyncFunction that connects to the database. This is unnecessary to call manuall
 
 #### `porker.create()`
 
-AsyncFunction that creates the table representing the current queue. The table schema is as follows:
+AsyncFunction that creates the table representing the current queue. The table schema is as follows (replacing `${queue}` with the name of your queue):
 
 ```sql
-CREATE TABLE IF NOT EXISTS ${queue}_jobs (
+CREATE TABLE IF NOT EXISTS "${queue}_jobs" (
   id serial PRIMARY KEY,
   priority integer NOT NULL DEFAULT 0,
   started_at timestamp with time zone,
@@ -35,6 +31,11 @@ CREATE TABLE IF NOT EXISTS ${queue}_jobs (
   error_count integer NOT NULL DEFAULT 0,
   args jsonb
 );
+
+CREATE INDEX IF NOT EXISTS "${queue}_jobs_error_count_index" ON "${queue}_jobs" (error_count);
+CREATE INDEX IF NOT EXISTS "${queue}_jobs_priority_index" ON "${queue}_jobs" (priority);
+CREATE INDEX IF NOT EXISTS "${queue}_jobs_repeat_every_index" ON "${queue}_jobs" (repeat_every);
+CREATE INDEX IF NOT EXISTS "${queue}_jobs_started_at_index" ON "${queue}_jobs" (started_at);
 ```
 
 #### `porker.subscribe(fn)`

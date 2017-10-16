@@ -44,6 +44,8 @@ internals.instrument = (fn) => {
 
 describe('Porker', () => {
 
+    const connection = { database: 'porker_test_suite' };
+
     beforeEach(async () => {
 
         await exec('createdb porker_test_suite');
@@ -64,7 +66,7 @@ describe('Porker', () => {
 
     it('throws when a subscriber is added twice', async () => {
 
-        const worker = new Porker({ database: 'porker_test_suite', queue: 'test' });
+        const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
         await worker.subscribe(async () => {});
@@ -75,7 +77,7 @@ describe('Porker', () => {
 
     it('does not throw when queues have a dash', async () => {
 
-        const worker = new Porker({ database: 'porker_test_suite', queue: 'test-queue' });
+        const worker = new Porker({ connection, queue: 'test-queue' });
         await expect(worker.create()).to.not.reject();
 
         await worker.end();
@@ -83,7 +85,7 @@ describe('Porker', () => {
 
     it('can create its own table', async () => {
 
-        const worker = new Porker({ database: 'porker_test_suite', queue: 'test' });
+        const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
         const db = worker[Symbols.pg];
@@ -103,7 +105,7 @@ describe('Porker', () => {
 
     it('can handle a single job', async () => {
 
-        const worker = new Porker({ database: 'porker_test_suite', queue: 'test' });
+        const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
         await worker.publish({ some: 'data' });
@@ -123,7 +125,7 @@ describe('Porker', () => {
 
     it('can handle two jobs', async () => {
 
-        const worker = new Porker({ database: 'porker_test_suite', queue: 'test' });
+        const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
         await worker.publish({ some: 'data' });
@@ -147,7 +149,7 @@ describe('Porker', () => {
 
     it('can handle a publish after a subscription', async () => {
 
-        const worker = new Porker({ database: 'porker_test_suite', queue: 'test' });
+        const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
         const listener = internals.instrument(async (job) => {
@@ -167,7 +169,7 @@ describe('Porker', () => {
 
     it('can handle two publishes after a subscription', async () => {
 
-        const worker = new Porker({ database: 'porker_test_suite', queue: 'test' });
+        const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
         const listener = internals.instrument(async (job) => {
@@ -191,7 +193,7 @@ describe('Porker', () => {
 
     it('can timeout a job', async () => {
 
-        const worker = new Porker({ database: 'porker_test_suite', queue: 'test', timeout: 1 });
+        const worker = new Porker({ connection, queue: 'test', timeout: 1 });
         await worker.create();
 
         const listener = internals.instrument(async (job) => {
@@ -216,7 +218,7 @@ describe('Porker', () => {
 
     it('can create a recurring job', async () => {
 
-        const worker = new Porker({ database: 'porker_test_suite', queue: 'test' });
+        const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
         const listener = internals.instrument(async (job) => {
@@ -239,7 +241,7 @@ describe('Porker', () => {
 
     it('can unpublish a recurring job (using full job object)', async () => {
 
-        const worker = new Porker({ database: 'porker_test_suite', queue: 'test' });
+        const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
         const listener = internals.instrument(async (job) => {
@@ -272,7 +274,7 @@ describe('Porker', () => {
 
     it('can unpublish a recurring job (using only job id)', async () => {
 
-        const worker = new Porker({ database: 'porker_test_suite', queue: 'test' });
+        const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
         const listener = internals.instrument(async (job) => {
