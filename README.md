@@ -38,6 +38,10 @@ CREATE INDEX IF NOT EXISTS "${queue}_jobs_repeat_every_index" ON "${queue}_jobs"
 CREATE INDEX IF NOT EXISTS "${queue}_jobs_started_at_index" ON "${queue}_jobs" (started_at);
 ```
 
+#### `porker.drop()`
+
+AsyncFunction that drops the table representing the current queue. THIS WILL DESTROY DATA.
+
 #### `porker.subscribe(fn)`
 
 AsyncFunction that adds a subscription to the current queue.
