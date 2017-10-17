@@ -18,9 +18,21 @@ internals.instrument = (fn) => {
 
     const f = async function (job) {
 
-        await fn(job);
+        try {
+            await fn(job);
+        }
+        catch (err) {
+            f.err = err;
+        }
+
         f.called = true;
         ++f.count;
+
+        if (f.err) {
+            const err = f.err;
+            f.err = undefined;
+            throw err;
+        }
     };
 
     f.called = false;
@@ -151,6 +163,45 @@ describe('Porker', () => {
 
         expect(listener.count).to.equal(1);
 
+        const db = worker[Symbols.pg];
+        while (db.activeQuery) {
+            await timeout(1);
+        }
+
+        const res = await db.query('SELECT * from test_jobs');
+        expect(res.rowCount).to.equal(0);
+
+        await worker.end();
+    });
+
+    it('can handle a failing job', async () => {
+
+        const worker = new Porker({ connection, queue: 'test' });
+        await worker.create();
+
+        const [id] = await worker.publish({ some: 'data' });
+
+        const listener = internals.instrument(async (job) => {
+
+            expect(job.args).to.equal({ some: 'data' });
+            throw new Error('Uh oh');
+        });
+
+        await worker.subscribe(listener);
+        await listener.fired();
+
+        expect(listener.count).to.equal(1);
+
+        const db = worker[Symbols.pg];
+        while (db.activeQuery) {
+            await timeout(1);
+        }
+
+        const res = await db.query('SELECT * from test_jobs');
+        expect(res.rowCount).to.equal(1);
+        expect(res.rows[0].id).to.equal(id);
+        expect(res.rows[0].error_count).to.equal(1);
+
         await worker.end();
     });
 
@@ -175,6 +226,45 @@ describe('Porker', () => {
 
         expect(listener.count).to.equal(2);
 
+        const db = worker[Symbols.pg];
+        while (db.activeQuery) {
+            await timeout(1);
+        }
+
+        const res = await db.query('SELECT * from test_jobs');
+        expect(res.rowCount).to.equal(0);
+
+        await worker.end();
+    });
+
+    it('can bulk publish jobs', async () => {
+
+        const worker = new Porker({ connection, queue: 'test' });
+        await worker.create();
+
+        await worker.publish([{ some: 'data' }, { some: 'data' }]);
+
+        const listener = internals.instrument(async (job) => {
+
+            expect(job.args).to.equal({ some: 'data' });
+        });
+
+        await worker.subscribe(listener);
+
+        await listener.fired();
+        listener.reset();
+        await listener.fired();
+
+        expect(listener.count).to.equal(2);
+
+        const db = worker[Symbols.pg];
+        while (db.activeQuery) {
+            await timeout(1);
+        }
+
+        const res = await db.query('SELECT * from test_jobs');
+        expect(res.rowCount).to.equal(0);
+
         await worker.end();
     });
 
@@ -194,6 +284,14 @@ describe('Porker', () => {
         await listener.fired();
 
         expect(listener.count).to.equal(1);
+
+        const db = worker[Symbols.pg];
+        while (db.activeQuery) {
+            await timeout(1);
+        }
+
+        const res = await db.query('SELECT * from test_jobs');
+        expect(res.rowCount).to.equal(0);
 
         await worker.end();
     });
@@ -219,6 +317,14 @@ describe('Porker', () => {
 
         expect(listener.count).to.equal(2);
 
+        const db = worker[Symbols.pg];
+        while (db.activeQuery) {
+            await timeout(1);
+        }
+
+        const res = await db.query('SELECT * from test_jobs');
+        expect(res.rowCount).to.equal(0);
+
         await worker.end();
     });
 
@@ -239,6 +345,10 @@ describe('Porker', () => {
         await listener.fired();
 
         const db = worker[Symbols.pg];
+        while (db.activeQuery) {
+            await timeout(1);
+        }
+
         const res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(1);
         const row = Object.assign({}, res.rows[0]);
@@ -267,71 +377,60 @@ describe('Porker', () => {
         await listener.fired();
         expect(listener.count).to.equal(2);
 
+        const db = worker[Symbols.pg];
+        const res = await db.query('SELECT * FROM test_jobs');
+        expect(res.rowCount).to.equal(1);
+        const row = Object.assign({}, res.rows[0]);
+        expect(row).to.contain({ error_count: 0, args: { timer: 'data' } });
+        expect(row.repeat_every).to.not.equal(null);
+
         await worker.end();
     });
 
-    it('can unpublish a recurring job (using full job object)', async () => {
+    it('can unpublish a job', async () => {
 
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const listener = internals.instrument(async (job) => {
+        const [job] = await worker.publish({ some: 'data' });
 
-            expect(job.args).to.equal({ timer: 'data' });
-            expect(job.repeat_every).to.not.equal(null);
-        });
+        const db = worker[Symbols.pg];
+        while (db.activeQuery) {
+            await timeout(1);
+        }
 
-        await worker.subscribe(listener);
+        let res = await db.query('SELECT * FROM test_jobs');
+        expect(res.rowCount).to.equal(1);
+        expect(res.rows[0].id).to.equal(job);
 
-        const job = await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
-        await listener.fired();
-
-        listener.reset();
-        await listener.fired();
-        expect(listener.count).to.equal(2);
-
-        listener.reset();
         await worker.unpublish(job);
-
-        await Promise.race([
-            listener.fired(),
-            timeout(150)
-        ]);
-
-        expect(listener.count).to.equal(2);
+        res = await db.query('SELECT * FROM test_jobs');
+        expect(res.rowCount).to.equal(0);
 
         await worker.end();
     });
 
-    it('can unpublish a recurring job (using only job id)', async () => {
+    it('can bulk unpublish jobs', async () => {
 
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const listener = internals.instrument(async (job) => {
+        const jobs = await worker.publish([{ some: 'data' }, { some: 'data' }]);
+        expect(jobs.length).to.equal(2);
 
-            expect(job.args).to.equal({ timer: 'data' });
-            expect(job.repeat_every).to.not.equal(null);
-        });
+        const db = worker[Symbols.pg];
+        while (db.activeQuery) {
+            await timeout(1);
+        }
 
-        await worker.subscribe(listener);
+        let res = await db.query('SELECT * FROM test_jobs');
+        expect(res.rowCount).to.equal(2);
+        expect(res.rows[0].id).to.equal(jobs[0]);
+        expect(res.rows[1].id).to.equal(jobs[1]);
 
-        const job = await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
-        await listener.fired();
-
-        listener.reset();
-        await listener.fired();
-        expect(listener.count).to.equal(2);
-
-        listener.reset();
-        await worker.unpublish(job.id);
-
-        await Promise.race([
-            listener.fired(),
-            timeout(150)
-        ]);
-
-        expect(listener.count).to.equal(2);
+        await worker.unpublish(jobs);
+        res = await db.query('SELECT * FROM test_jobs');
+        expect(res.rowCount).to.equal(0);
 
         await worker.end();
     });
