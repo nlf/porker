@@ -3,14 +3,14 @@
 const Porker = require('../');
 const Symbols = require('../lib/symbols');
 
-const ChildProcess = require('child_process');
+const Pg = require('pg');
+
 const Code = require('code');
 const Lab = require('lab');
 const Util = require('util');
 
-const exec = Util.promisify(ChildProcess.exec);
 const timeout = Util.promisify(setTimeout);
-const { afterEach, beforeEach, describe, it } = exports.lab = Lab.script();
+const { afterEach, describe, it } = exports.lab = Lab.script();
 const expect = Code.expect;
 
 const internals = {};
@@ -42,25 +42,33 @@ internals.instrument = (fn) => {
     return f;
 };
 
+
 describe('Porker', () => {
 
-    const connection = { database: 'porker_test_suite' };
-
-    beforeEach(async () => {
-
-        await exec('createdb porker_test_suite');
-    });
+    const connection = process.env.PORKER_CONNECTION ? { connectionString: process.env.PORKER_CONNECTION } : { database: 'porker_test_suite' };
 
     afterEach(async () => {
 
-        await exec('dropdb porker_test_suite');
+        const client = new Pg.Client(connection);
+        await client.connect();
+        // eslint-disable-next-line quotes
+        let res = await client.query(`SELECT 'DROP TABLE IF EXISTS ' || quote_ident(table_schema) || '.' || quote_ident(table_name) || ' CASCADE;' AS drop_table FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND NOT table_schema ~ '^(information_schema|pg_.*)$'`);
+        for (const row of res.rows) {
+            await client.query(row.drop_table);
+        }
+        // eslint-disable-next-line quotes
+        res = await client.query(`SELECT 'DROP SEQUENCE IF EXISTS ' || quote_ident(relname) || ' CASCADE;' AS drop_sequence FROM pg_statio_user_sequences`);
+        for (const row of res.rows) {
+            await client.query(row.drop_sequence);
+        }
+        await client.end();
     });
 
     it('throws when no queue is specified', async () => {
 
         expect(() => {
 
-            new Porker({ database: 'porker_test_suite' });
+            new Porker();
         }).to.throw('Missing required parameter: queue');
     });
 
@@ -100,6 +108,29 @@ describe('Porker', () => {
         expect(rows).to.contain({ column_name: 'error_count' });
         expect(rows).to.contain({ column_name: 'args' });
 
+        await worker.end();
+    });
+
+    it('can drop its own table', async () => {
+
+        const worker = new Porker({ connection, queue: 'test' });
+        await worker.create();
+
+        const db = worker[Symbols.pg];
+        let res = await db.query('SELECT column_name FROM information_schema.columns WHERE table_name = \'test_jobs\'');
+        expect(res.rowCount).to.equal(6);
+
+        const rows = res.rows.map((row) => Object.assign({}, row));
+        expect(rows).to.contain({ column_name: 'id' });
+        expect(rows).to.contain({ column_name: 'priority' });
+        expect(rows).to.contain({ column_name: 'started_at' });
+        expect(rows).to.contain({ column_name: 'repeat_every' });
+        expect(rows).to.contain({ column_name: 'error_count' });
+        expect(rows).to.contain({ column_name: 'args' });
+
+        await worker.drop();
+        res = await db.query('SELECT column_name FROM information_schema.columns WHERE table_name = \'test_jobs\'');
+        expect(res.rowCount).to.equal(0);
         await worker.end();
     });
 
