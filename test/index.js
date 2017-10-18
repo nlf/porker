@@ -43,11 +43,6 @@ internals.instrument = (fn) => {
             await Util.promisify(setImmediate)();
         }
 
-        return f.called;
-    };
-
-    f.reset = () => {
-
         f.called = false;
     };
 
@@ -95,6 +90,17 @@ describe('Porker', () => {
         await worker.end();
     });
 
+    it('throws when retrier is added twice', async () => {
+
+        const worker = new Porker({ connection, queue: 'test' });
+        await worker.create();
+
+        await worker.retry(async () => {});
+        await expect(worker.retry(async () => {})).to.reject('A retry handler has already been added to this queue');
+
+        await worker.end();
+    });
+
     it('does not throw when queues have a dash', async () => {
 
         const worker = new Porker({ connection, queue: 'test-queue' });
@@ -110,7 +116,7 @@ describe('Porker', () => {
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT column_name FROM information_schema.columns WHERE table_name = \'test_jobs\'');
-        expect(res.rowCount).to.equal(6);
+        expect(res.rowCount).to.equal(7);
 
         const rows = res.rows.map((row) => Object.assign({}, row));
         expect(rows).to.contain({ column_name: 'id' });
@@ -118,6 +124,7 @@ describe('Porker', () => {
         expect(rows).to.contain({ column_name: 'started_at' });
         expect(rows).to.contain({ column_name: 'repeat_every' });
         expect(rows).to.contain({ column_name: 'error_count' });
+        expect(rows).to.contain({ column_name: 'retry_at' });
         expect(rows).to.contain({ column_name: 'args' });
 
         await worker.end();
@@ -130,7 +137,7 @@ describe('Porker', () => {
 
         const db = worker[Symbols.pg];
         let res = await db.query('SELECT column_name FROM information_schema.columns WHERE table_name = \'test_jobs\'');
-        expect(res.rowCount).to.equal(6);
+        expect(res.rowCount).to.equal(7);
 
         const rows = res.rows.map((row) => Object.assign({}, row));
         expect(rows).to.contain({ column_name: 'id' });
@@ -138,6 +145,7 @@ describe('Porker', () => {
         expect(rows).to.contain({ column_name: 'started_at' });
         expect(rows).to.contain({ column_name: 'repeat_every' });
         expect(rows).to.contain({ column_name: 'error_count' });
+        expect(rows).to.contain({ column_name: 'retry_at' });
         expect(rows).to.contain({ column_name: 'args' });
 
         await worker.drop();
@@ -151,6 +159,9 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
+        const drained = internals.instrument(async (job) => {});
+        worker.on('drain', drained);
+
         await worker.publish({ some: 'data' });
 
         const listener = internals.instrument(async (job) => {
@@ -163,11 +174,9 @@ describe('Porker', () => {
 
         expect(listener.count).to.equal(1);
 
-        const db = worker[Symbols.pg];
-        while (db.activeQuery) {
-            await timeout(1);
-        }
+        await drained.fired();
 
+        const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -178,6 +187,9 @@ describe('Porker', () => {
 
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
+
+        const drained = internals.instrument(async (job) => {});
+        worker.on('drain', drained);
 
         const [id] = await worker.publish({ some: 'data' });
 
@@ -192,15 +204,59 @@ describe('Porker', () => {
 
         expect(listener.count).to.equal(1);
 
-        const db = worker[Symbols.pg];
-        while (db.activeQuery) {
-            await timeout(1);
-        }
+        await drained.fired();
 
+        const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(1);
         expect(res.rows[0].id).to.equal(id);
         expect(res.rows[0].error_count).to.equal(1);
+        expect(res.rows[0].retry_at).to.be.above(new Date());
+
+        await worker.end();
+    });
+
+    it('can retry a failed job', async () => {
+
+        const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
+        await worker.create();
+
+        const drained = internals.instrument(async (job) => {});
+        worker.on('drain', drained);
+
+        const drainedRetries = internals.instrument(async (job) => {});
+        worker.on('drainRetries', drainedRetries);
+
+        await worker.publish({ some: 'data' });
+
+        const listener = internals.instrument(async (job) => {
+
+            expect(job.args).to.equal({ some: 'data' });
+            throw new Error('Uh oh');
+        });
+
+        const retrier = internals.instrument(async (job) => {
+
+            expect(job.args).to.equal({ some: 'data' });
+            expect(job.error_count).to.equal(1);
+        });
+
+        await worker.subscribe(listener);
+        await listener.fired();
+
+        expect(listener.count).to.equal(1);
+
+        await worker.retry(retrier);
+        await retrier.fired();
+
+        expect(retrier.count).to.equal(1);
+
+        await drained.fired();
+        await drainedRetries.fired();
+
+        const db = worker[Symbols.pg];
+        const res = await db.query('SELECT * from test_jobs');
+        expect(res.rowCount).to.equal(0);
 
         await worker.end();
     });
@@ -209,6 +265,9 @@ describe('Porker', () => {
 
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
+
+        const drained = internals.instrument(async (job) => {});
+        worker.on('drain', drained);
 
         await worker.publish({ some: 'data' });
         await worker.publish({ some: 'data' });
@@ -221,16 +280,59 @@ describe('Porker', () => {
         await worker.subscribe(listener);
 
         await listener.fired();
-        listener.reset();
         await listener.fired();
 
         expect(listener.count).to.equal(2);
 
-        const db = worker[Symbols.pg];
-        while (db.activeQuery) {
-            await timeout(1);
-        }
+        await drained.fired();
 
+        const db = worker[Symbols.pg];
+        const res = await db.query('SELECT * from test_jobs');
+        expect(res.rowCount).to.equal(0);
+
+        await worker.end();
+    });
+
+    it('can retry two failed jobs', async () => {
+
+        const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
+        await worker.create();
+
+        const drained = internals.instrument(async (job) => {});
+        worker.on('drain', drained);
+
+        const drainedRetries = internals.instrument(async (job) => {});
+        worker.on('drainRetries', drainedRetries);
+
+        await worker.publish({ some: 'data' });
+        await worker.publish({ some: 'data' });
+
+        const listener = internals.instrument(async (job) => {
+
+            expect(job.args).to.equal({ some: 'data' });
+            throw new Error('Uh oh');
+        });
+
+        const retrier = internals.instrument(async (job) => {
+
+            expect(job.args).to.equal({ some: 'data' });
+            expect(job.error_count).to.equal(1);
+        });
+
+        await worker.subscribe(listener);
+        await listener.fired();
+        await listener.fired();
+        expect(listener.count).to.equal(2);
+
+        await worker.retry(retrier);
+        await retrier.fired();
+        await retrier.fired();
+        expect(retrier.count).to.equal(2);
+
+        await drained.fired();
+        await drainedRetries.fired();
+
+        const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -242,6 +344,9 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
+        const drained = internals.instrument(async (job) => {});
+        worker.on('drain', drained);
+
         await worker.publish([{ some: 'data' }, { some: 'data' }]);
 
         const listener = internals.instrument(async (job) => {
@@ -252,16 +357,12 @@ describe('Porker', () => {
         await worker.subscribe(listener);
 
         await listener.fired();
-        listener.reset();
         await listener.fired();
-
         expect(listener.count).to.equal(2);
 
-        const db = worker[Symbols.pg];
-        while (db.activeQuery) {
-            await timeout(1);
-        }
+        await drained.fired();
 
+        const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -272,6 +373,9 @@ describe('Porker', () => {
 
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
+
+        const drained = internals.instrument(async (job) => {});
+        worker.on('drain', drained);
 
         const listener = internals.instrument(async (job) => {
 
@@ -285,11 +389,9 @@ describe('Porker', () => {
 
         expect(listener.count).to.equal(1);
 
-        const db = worker[Symbols.pg];
-        while (db.activeQuery) {
-            await timeout(1);
-        }
+        await drained.fired();
 
+        const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -301,6 +403,9 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
+        const drained = internals.instrument(async (job) => {});
+        worker.on('drain', drained);
+
         const listener = internals.instrument(async (job) => {
 
             expect(job.args).to.equal({ some: 'data' });
@@ -311,17 +416,14 @@ describe('Porker', () => {
         await worker.publish({ some: 'data' });
         await listener.fired();
 
-        listener.reset();
         await worker.publish({ some: 'data' });
         await listener.fired();
 
         expect(listener.count).to.equal(2);
 
-        const db = worker[Symbols.pg];
-        while (db.activeQuery) {
-            await timeout(1);
-        }
+        await drained.fired();
 
+        const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -332,6 +434,9 @@ describe('Porker', () => {
 
         const worker = new Porker({ connection, queue: 'test', timeout: 1 });
         await worker.create();
+
+        const drained = internals.instrument(async (job) => {});
+        worker.on('drain', drained);
 
         const listener = internals.instrument(async (job) => {
 
@@ -344,11 +449,9 @@ describe('Porker', () => {
         await worker.publish({ some: 'data' });
         await listener.fired();
 
-        const db = worker[Symbols.pg];
-        while (db.activeQuery) {
-            await timeout(1);
-        }
+        await drained.fired();
 
+        const db = worker[Symbols.pg];
         const res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(1);
         const row = Object.assign({}, res.rows[0]);
@@ -372,8 +475,6 @@ describe('Porker', () => {
 
         await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
         await listener.fired();
-
-        listener.reset();
         await listener.fired();
         expect(listener.count).to.equal(2);
 
@@ -383,6 +484,57 @@ describe('Porker', () => {
         const row = Object.assign({}, res.rows[0]);
         expect(row).to.contain({ error_count: 0, args: { timer: 'data' } });
         expect(row.repeat_every).to.not.equal(null);
+
+        await worker.end();
+    });
+
+    it('can retry a failed job and reset it', async () => {
+
+        const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
+        await worker.create();
+
+        const drained = internals.instrument(async (job) => {});
+        worker.on('drain', drained);
+
+        const drainedRetries = internals.instrument(async (job) => {});
+        worker.on('drainRetries', drainedRetries);
+
+        const listener = internals.instrument(async (job) => {
+
+            expect(job.args).to.equal({ timer: 'data' });
+            expect(job.repeat_every).to.not.equal(null);
+            throw new Error('Uh oh');
+        });
+
+        const retrier = internals.instrument(async (job) => {
+
+            expect(job.args).to.equal({ timer: 'data' });
+        });
+
+        await worker.subscribe(listener);
+
+        const [id] = await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
+        await listener.fired();
+
+        expect(listener.count).to.equal(1);
+
+        await worker.retry(retrier);
+        await retrier.fired();
+        await drainedRetries.fired(); // fires immediately after adding handler
+
+        expect(retrier.count).to.equal(1);
+
+        await drained.fired();
+        await drainedRetries.fired();
+
+        const db = worker[Symbols.pg];
+        const res = await db.query('SELECT * FROM test_jobs');
+        expect(res.rowCount).to.equal(1);
+        const row = Object.assign({}, res.rows[0]);
+        expect(row.id).to.equal(id);
+        expect(row.error_count).to.equal(0);
+        expect(row.repeat_every).to.not.equal(null);
+        expect(row.retry_at).to.equal(null);
 
         await worker.end();
     });
