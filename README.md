@@ -22,7 +22,9 @@ AsyncFunction that connects to the database. This is unnecessary to call manuall
 
 #### `porker.create()`
 
-AsyncFunction that creates the table representing the current queue. The table schema is as follows (replacing `${queue}` with the name of your queue):
+AsyncFunction that creates or updates the table representing the current queue. It is recommended to run this method at least once whenever updating Porker as it may create new columns in your job tables.
+
+The SQL run is as follows (replacing `${queue}` with the name of your queue):
 
 ```sql
 CREATE TABLE IF NOT EXISTS "${queue}_jobs" (
@@ -31,9 +33,10 @@ CREATE TABLE IF NOT EXISTS "${queue}_jobs" (
   started_at timestamp with time zone,
   repeat_every interval,
   error_count integer NOT NULL DEFAULT 0,
-  retry_at timestamp with time zone,
   args jsonb
 );
+
+ALTER TABLE "${queue}_jobs" ADD COLUMN IF NOT EXISTS retry_at timestamp with time zone;
 
 CREATE INDEX IF NOT EXISTS "${queue}_jobs_error_count_index" ON "${queue}_jobs" (error_count);
 CREATE INDEX IF NOT EXISTS "${queue}_jobs_priority_index" ON "${queue}_jobs" (priority);
