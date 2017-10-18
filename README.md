@@ -1,6 +1,6 @@
 ## Porker
 
-A super simple job queue for Node.js (7.6 and higher, uses async functions) built on top of Postgres (9.5 and higher since we use `SELECT FOR UPDATE SKIP LOCKED`)
+A super simple job queue for Node.js (7.6 and higher, uses async functions) built on top of Postgres (9.6 and higher since we use `SELECT FOR UPDATE SKIP LOCKED` and `ADD COLUMN IF NOT EXISTS`)
 
 ### Usage
 
