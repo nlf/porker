@@ -58,12 +58,11 @@ describe('Porker', () => {
 
         const client = new Pg.Client(connection);
         await client.connect();
-        // eslint-disable-next-line quotes
         let res = await client.query(`SELECT 'DROP TABLE IF EXISTS ' || quote_ident(table_schema) || '.' || quote_ident(table_name) || ' CASCADE;' AS drop_table FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND NOT table_schema ~ '^(information_schema|pg_.*)$'`);
         for (const row of res.rows) {
             await client.query(row.drop_table);
         }
-        // eslint-disable-next-line quotes
+
         res = await client.query(`SELECT 'DROP SEQUENCE IF EXISTS ' || quote_ident(relname) || ' CASCADE;' AS drop_sequence FROM pg_statio_user_sequences`);
         for (const row of res.rows) {
             await client.query(row.drop_sequence);
@@ -71,7 +70,7 @@ describe('Porker', () => {
         await client.end();
     });
 
-    it('throws when no queue is specified', async () => {
+    it('throws when no queue is specified', () => {
 
         expect(() => {
 
@@ -159,12 +158,12 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument(async (job) => {});
+        const drained = internals.instrument((job) => {});
         worker.on('drain', drained);
 
         await worker.publish({ some: 'data' });
 
-        const listener = internals.instrument(async (job) => {
+        const listener = internals.instrument((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
         });
@@ -188,12 +187,12 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument(async (job) => {});
+        const drained = internals.instrument((job) => {});
         worker.on('drain', drained);
 
         const [id] = await worker.publish({ some: 'data' });
 
-        const listener = internals.instrument(async (job) => {
+        const listener = internals.instrument((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
             throw new Error('Uh oh');
@@ -221,21 +220,21 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
         await worker.create();
 
-        const drained = internals.instrument(async (job) => {});
+        const drained = internals.instrument((job) => {});
         worker.on('drain', drained);
 
-        const drainedRetries = internals.instrument(async (job) => {});
+        const drainedRetries = internals.instrument((job) => {});
         worker.on('drainRetries', drainedRetries);
 
         await worker.publish({ some: 'data' });
 
-        const listener = internals.instrument(async (job) => {
+        const listener = internals.instrument((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
             throw new Error('Uh oh');
         });
 
-        const retrier = internals.instrument(async (job) => {
+        const retrier = internals.instrument((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
             expect(job.error_count).to.equal(1);
@@ -266,13 +265,13 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument(async (job) => {});
+        const drained = internals.instrument((job) => {});
         worker.on('drain', drained);
 
         await worker.publish({ some: 'data' });
         await worker.publish({ some: 'data' });
 
-        const listener = internals.instrument(async (job) => {
+        const listener = internals.instrument((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
         });
@@ -298,22 +297,22 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
         await worker.create();
 
-        const drained = internals.instrument(async (job) => {});
+        const drained = internals.instrument((job) => {});
         worker.on('drain', drained);
 
-        const drainedRetries = internals.instrument(async (job) => {});
+        const drainedRetries = internals.instrument((job) => {});
         worker.on('drainRetries', drainedRetries);
 
         await worker.publish({ some: 'data' });
         await worker.publish({ some: 'data' });
 
-        const listener = internals.instrument(async (job) => {
+        const listener = internals.instrument((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
             throw new Error('Uh oh');
         });
 
-        const retrier = internals.instrument(async (job) => {
+        const retrier = internals.instrument((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
             expect(job.error_count).to.equal(1);
@@ -344,12 +343,12 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument(async (job) => {});
+        const drained = internals.instrument((job) => {});
         worker.on('drain', drained);
 
         await worker.publish([{ some: 'data' }, { some: 'data' }]);
 
-        const listener = internals.instrument(async (job) => {
+        const listener = internals.instrument((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
         });
@@ -374,10 +373,10 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument(async (job) => {});
+        const drained = internals.instrument((job) => {});
         worker.on('drain', drained);
 
-        const listener = internals.instrument(async (job) => {
+        const listener = internals.instrument((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
         });
@@ -403,10 +402,10 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument(async (job) => {});
+        const drained = internals.instrument((job) => {});
         worker.on('drain', drained);
 
-        const listener = internals.instrument(async (job) => {
+        const listener = internals.instrument((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
         });
@@ -435,7 +434,7 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test', timeout: 1 });
         await worker.create();
 
-        const drained = internals.instrument(async (job) => {});
+        const drained = internals.instrument((job) => {});
         worker.on('drain', drained);
 
         const listener = internals.instrument(async (job) => {
@@ -465,7 +464,7 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const listener = internals.instrument(async (job) => {
+        const listener = internals.instrument((job) => {
 
             expect(job.args).to.equal({ timer: 'data' });
             expect(job.repeat_every).to.not.equal(null);
@@ -493,20 +492,20 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
         await worker.create();
 
-        const drained = internals.instrument(async (job) => {});
+        const drained = internals.instrument((job) => {});
         worker.on('drain', drained);
 
-        const drainedRetries = internals.instrument(async (job) => {});
+        const drainedRetries = internals.instrument((job) => {});
         worker.on('drainRetries', drainedRetries);
 
-        const listener = internals.instrument(async (job) => {
+        const listener = internals.instrument((job) => {
 
             expect(job.args).to.equal({ timer: 'data' });
             expect(job.repeat_every).to.not.equal(null);
             throw new Error('Uh oh');
         });
 
-        const retrier = internals.instrument(async (job) => {
+        const retrier = internals.instrument((job) => {
 
             expect(job.args).to.equal({ timer: 'data' });
         });
