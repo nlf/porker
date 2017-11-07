@@ -3,15 +3,17 @@
 const Porker = require('../');
 const Symbols = require('../lib/symbols');
 
+const Http = require('http');
 const Pg = require('pg');
 
 const Code = require('code');
 const Lab = require('lab');
 const Util = require('util');
 
+const get = Util.promisify(Http.get);
 const timeout = Util.promisify(setTimeout);
 const { afterEach, describe, it } = exports.lab = Lab.script();
-const expect = Code.expect;
+const { expect, fail } = Code;
 
 const internals = {};
 internals.instrument = (fn) => {
@@ -583,6 +585,49 @@ describe('Porker', () => {
         res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(0);
 
+        await worker.end();
+    });
+
+    it('returns 400 on healthcheck when not connected', async () => {
+
+        const worker = new Porker({ connection, queue: 'test', healthcheckPort: 4500 });
+
+        try {
+            await get(`http://localhost:${worker.healthcheckPort}`);
+            fail('this should not be reachable');
+        }
+        catch (err) {
+            expect(err.statusCode).to.equal(400);
+        }
+
+        worker[Symbols.healthcheck].close();
+    });
+
+    it('returns 200 on healthcheck when connected', async () => {
+
+        const worker = new Porker({ connection, queue: 'test', healthcheckPort: 4500 });
+
+        await worker.create();
+
+        // why this throws even for a 200, i have no idea
+        try {
+            await get(`http://localhost:${worker.healthcheckPort}`);
+            fail('this should not be reachable');
+        }
+        catch (err) {
+            expect(err.statusCode).to.equal(200);
+        }
+
+        await worker.end();
+    });
+
+    it('has no healthcheck listener by default', async () => {
+
+        const worker = new Porker({ connection, queue: 'test' });
+
+        expect(worker[Symbols.healthcheck]).to.not.exist();
+
+        await worker.create();
         await worker.end();
     });
 });

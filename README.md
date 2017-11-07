@@ -5,7 +5,7 @@ A super simple job queue for Node.js (7.6 and higher, uses async functions) buil
 ### Usage
 
 
-#### `new Porker({ connection, queue, errorThreshold, retryDelay, timeout, concurrency })`
+#### `new Porker({ connection, queue, errorThreshold, retryDelay, timeout, concurrency, healthcheckPort })`
 
 Creates and returns a new worker.
 
@@ -15,6 +15,7 @@ Creates and returns a new worker.
 - `retryDelay`: (optional) Interval to wait between failure and retry attempt, specified as a Postgres interval string, defaults to `'5 minutes'`
 - `timeout`: (optional) Maximum time a worker function can run before a job will be flagged as an error and returned to the queue, defaults to `15000` (15 seconds)
 - `concurrency`: (optional) How many jobs to process simultaneously, defaults to `1`
+- `healthcheckPort`: (optional) If defined, will start a simple healthcheck listener on this port. Returns an HTTP 200 when the worker is connected to postgres, and a 400 when not. Defaults to `null`
 
 #### `porker.connect()`
 
