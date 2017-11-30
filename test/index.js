@@ -395,7 +395,7 @@ describe('Porker', () => {
         await worker.create();
 
         const drained = new AsyncMutex();
-        worker.on('drain', () => {
+        worker.once('drain', () => {
 
             drained.release();
         });
@@ -413,7 +413,6 @@ describe('Porker', () => {
         await worker.publish({ some: 'data' });
         await listener.acquire();
 
-        await drained.acquire();
         await drained.acquire();
 
         const db = worker[Symbols.pg];
