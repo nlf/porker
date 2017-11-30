@@ -82,7 +82,7 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT column_name FROM information_schema.columns WHERE table_name = \'test_jobs\'');
         expect(res.rowCount).to.equal(7);
 
@@ -103,7 +103,7 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         let res = await db.query('SELECT column_name FROM information_schema.columns WHERE table_name = \'test_jobs\'');
         expect(res.rowCount).to.equal(7);
 
@@ -146,7 +146,7 @@ describe('Porker', () => {
         await listener.acquire();
         await drained.acquire();
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -179,7 +179,7 @@ describe('Porker', () => {
             drained.acquire()
         ]);
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(1);
         expect(res.rows[0].id).to.equal(id);
@@ -231,7 +231,7 @@ describe('Porker', () => {
             drainedRetries.acquire()
         ]);
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -265,7 +265,7 @@ describe('Porker', () => {
             drained.acquire()
         ]);
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -317,7 +317,7 @@ describe('Porker', () => {
             drainedRetries.acquire()
         ]);
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -350,7 +350,7 @@ describe('Porker', () => {
             drained.acquire()
         ]);
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -382,7 +382,7 @@ describe('Porker', () => {
             drained.acquire()
         ]);
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -415,7 +415,7 @@ describe('Porker', () => {
 
         await drained.acquire();
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -448,7 +448,7 @@ describe('Porker', () => {
             drained.acquire()
         ]);
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(1);
         const row = Object.assign({}, res.rows[0]);
@@ -476,7 +476,7 @@ describe('Porker', () => {
             listener.acquire()
         ]);
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(1);
         const row = Object.assign({}, res.rows[0]);
@@ -512,7 +512,7 @@ describe('Porker', () => {
         await listener.acquire();
         await retrier.acquire();
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(1);
         const row = Object.assign({}, res.rows[0]);
@@ -564,7 +564,7 @@ describe('Porker', () => {
             drainedRetries.acquire()
         ]);
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         const res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(1);
         const row = Object.assign({}, res.rows[0]);
@@ -583,7 +583,7 @@ describe('Porker', () => {
 
         const [job] = await worker.publish({ some: 'data' });
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         while (db.activeQuery) {
             await timeout(1);
         }
@@ -607,7 +607,7 @@ describe('Porker', () => {
         const jobs = await worker.publish([{ some: 'data' }, { some: 'data' }]);
         expect(jobs.length).to.equal(2);
 
-        const db = worker[Symbols.pg];
+        const db = worker[Symbols.client];
         while (db.activeQuery) {
             await timeout(1);
         }
@@ -657,11 +657,12 @@ describe('Porker', () => {
         await worker.end();
     });
 
-    it('has no healthcheck listener by default', async () => {
+    it('does not listen for healthchecks by default', async () => {
 
         const worker = new Porker({ connection, queue: 'test' });
 
-        expect(worker[Symbols.healthcheck]).to.not.exist();
+        expect(worker[Symbols.healthcheck]).to.exist();
+        expect(worker[Symbols.healthcheck].address()).to.equal(null);
 
         await worker.create();
         await worker.end();
