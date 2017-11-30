@@ -1,5 +1,6 @@
 'use strict';
 
+const AsyncMutex = require('../lib/mutex');
 const Porker = require('../');
 const Symbols = require('../lib/symbols');
 
@@ -15,42 +16,6 @@ const timeout = Util.promisify(setTimeout);
 const { afterEach, describe, it } = exports.lab = Lab.script();
 const { expect, fail } = Code;
 
-const internals = {};
-internals.instrument = (fn) => {
-
-    const f = async function (job) {
-
-        try {
-            await fn(job);
-        }
-        catch (err) {
-            f.err = err;
-        }
-
-        f.called = true;
-        ++f.count;
-
-        if (f.err) {
-            const err = f.err;
-            f.err = undefined;
-            throw err;
-        }
-    };
-
-    f.called = false;
-    f.count = 0;
-    f.fired = async () => {
-
-        while (!f.called) {
-            await Util.promisify(setImmediate)();
-        }
-
-        f.called = false;
-    };
-
-    return f;
-};
-
 
 describe('Porker', () => {
 
@@ -60,6 +25,7 @@ describe('Porker', () => {
 
         const client = new Pg.Client(connection);
         await client.connect();
+        await client.query('BEGIN');
         let res = await client.query(`SELECT 'DROP TABLE IF EXISTS ' || quote_ident(table_schema) || '.' || quote_ident(table_name) || ' CASCADE;' AS drop_table FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND NOT table_schema ~ '^(information_schema|pg_.*)$'`);
         for (const row of res.rows) {
             await client.query(row.drop_table);
@@ -69,6 +35,7 @@ describe('Porker', () => {
         for (const row of res.rows) {
             await client.query(row.drop_sequence);
         }
+        await client.query('COMMIT');
         await client.end();
     });
 
@@ -160,22 +127,24 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument((job) => {});
-        worker.on('drain', drained);
+        const drained = new AsyncMutex();
+
+        worker.once('drain', () => {
+
+            drained.release();
+        });
 
         await worker.publish({ some: 'data' });
 
-        const listener = internals.instrument((job) => {
+        const listener = new AsyncMutex();
+        await worker.subscribe((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
+            listener.release();
         });
 
-        await worker.subscribe(listener);
-        await listener.fired();
-
-        expect(listener.count).to.equal(1);
-
-        await drained.fired();
+        await listener.acquire();
+        await drained.acquire();
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
@@ -189,23 +158,26 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument((job) => {});
-        worker.on('drain', drained);
+        const drained = new AsyncMutex();
+        worker.once('drain', () => {
+
+            drained.release();
+        });
 
         const [id] = await worker.publish({ some: 'data' });
 
-        const listener = internals.instrument((job) => {
+        const listener = new AsyncMutex();
+        await worker.subscribe((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
+            listener.release();
             throw new Error('Uh oh');
         });
 
-        await worker.subscribe(listener);
-        await listener.fired();
-
-        expect(listener.count).to.equal(1);
-
-        await drained.fired();
+        await Promise.all([
+            listener.acquire(),
+            drained.acquire()
+        ]);
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
@@ -222,38 +194,42 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
         await worker.create();
 
-        const drained = internals.instrument((job) => {});
-        worker.on('drain', drained);
+        const drained = new AsyncMutex();
+        worker.once('drain', () => {
 
-        const drainedRetries = internals.instrument((job) => {});
-        worker.on('drainRetries', drainedRetries);
+            drained.release();
+        });
+
+        const drainedRetries = new AsyncMutex();
+        worker.once('drainRetries', () => {
+
+            drainedRetries.release();
+        });
 
         await worker.publish({ some: 'data' });
 
-        const listener = internals.instrument((job) => {
+        const listener = new AsyncMutex();
+        await worker.subscribe((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
+            listener.release();
             throw new Error('Uh oh');
         });
 
-        const retrier = internals.instrument((job) => {
+        const retrier = new AsyncMutex();
+        await worker.retry((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
             expect(job.error_count).to.equal(1);
+            retrier.release();
         });
 
-        await worker.subscribe(listener);
-        await listener.fired();
-
-        expect(listener.count).to.equal(1);
-
-        await worker.retry(retrier);
-        await retrier.fired();
-
-        expect(retrier.count).to.equal(1);
-
-        await drained.fired();
-        await drainedRetries.fired();
+        await Promise.all([
+            listener.acquire(),
+            retrier.acquire(),
+            drained.acquire(),
+            drainedRetries.acquire()
+        ]);
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
@@ -267,25 +243,27 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument((job) => {});
-        worker.on('drain', drained);
+        const drained = new AsyncMutex();
+        worker.once('drain', () => {
 
-        await worker.publish({ some: 'data' });
-        await worker.publish({ some: 'data' });
-
-        const listener = internals.instrument((job) => {
-
-            expect(job.args).to.equal({ some: 'data' });
+            drained.release();
         });
 
-        await worker.subscribe(listener);
+        await worker.publish({ some: 'data' });
+        await worker.publish({ some: 'data' });
 
-        await listener.fired();
-        await listener.fired();
+        const listener = new AsyncMutex();
+        await worker.subscribe((job) => {
 
-        expect(listener.count).to.equal(2);
+            expect(job.args).to.equal({ some: 'data' });
+            listener.release();
+        });
 
-        await drained.fired();
+        await Promise.all([
+            listener.acquire(),
+            listener.acquire(),
+            drained.acquire()
+        ]);
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
@@ -296,42 +274,48 @@ describe('Porker', () => {
 
     it('can retry two failed jobs', async () => {
 
-        const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
+        const worker = new Porker({ connection, queue: 'test', retryDelay: '1 millisecond' });
         await worker.create();
 
-        const drained = internals.instrument((job) => {});
-        worker.on('drain', drained);
+        const drained = new AsyncMutex();
+        worker.on('drain', () => {
 
-        const drainedRetries = internals.instrument((job) => {});
-        worker.on('drainRetries', drainedRetries);
+            drained.release();
+        });
+
+        const drainedRetries = new AsyncMutex();
+        worker.on('drainRetries', () => {
+
+            drainedRetries.release();
+        });
 
         await worker.publish({ some: 'data' });
         await worker.publish({ some: 'data' });
 
-        const listener = internals.instrument((job) => {
+        const listener = new AsyncMutex();
+        await worker.subscribe((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
+            listener.release();
             throw new Error('Uh oh');
         });
 
-        const retrier = internals.instrument((job) => {
+        const retrier = new AsyncMutex();
+        await worker.retry((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
             expect(job.error_count).to.equal(1);
+            retrier.release();
         });
 
-        await worker.subscribe(listener);
-        await listener.fired();
-        await listener.fired();
-        expect(listener.count).to.equal(2);
-
-        await worker.retry(retrier);
-        await retrier.fired();
-        await retrier.fired();
-        expect(retrier.count).to.equal(2);
-
-        await drained.fired();
-        await drainedRetries.fired();
+        await Promise.all([
+            listener.acquire(),
+            listener.acquire(),
+            drained.acquire(),
+            retrier.acquire(),
+            retrier.acquire(),
+            drainedRetries.acquire()
+        ]);
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
@@ -345,23 +329,26 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument((job) => {});
-        worker.on('drain', drained);
+        const drained = new AsyncMutex();
+        worker.once('drain', () => {
+
+            drained.release();
+        });
 
         await worker.publish([{ some: 'data' }, { some: 'data' }]);
 
-        const listener = internals.instrument((job) => {
+        const listener = new AsyncMutex();
+        await worker.subscribe((job) => {
 
             expect(job.args).to.equal({ some: 'data' });
+            listener.release();
         });
 
-        await worker.subscribe(listener);
-
-        await listener.fired();
-        await listener.fired();
-        expect(listener.count).to.equal(2);
-
-        await drained.fired();
+        await Promise.all([
+            listener.acquire(),
+            listener.acquire(),
+            drained.acquire()
+        ]);
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
@@ -375,22 +362,25 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument((job) => {});
-        worker.on('drain', drained);
+        const drained = new AsyncMutex();
+        worker.once('drain', () => {
 
-        const listener = internals.instrument((job) => {
-
-            expect(job.args).to.equal({ some: 'data' });
+            drained.release();
         });
 
-        await worker.subscribe(listener);
+        const listener = new AsyncMutex();
+        await worker.subscribe((job) => {
+
+            expect(job.args).to.equal({ some: 'data' });
+            listener.release();
+        });
 
         await worker.publish({ some: 'data' });
-        await listener.fired();
 
-        expect(listener.count).to.equal(1);
-
-        await drained.fired();
+        await Promise.all([
+            listener.acquire(),
+            drained.acquire()
+        ]);
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
@@ -404,25 +394,27 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const drained = internals.instrument((job) => {});
-        worker.on('drain', drained);
+        const drained = new AsyncMutex();
+        worker.on('drain', () => {
 
-        const listener = internals.instrument((job) => {
-
-            expect(job.args).to.equal({ some: 'data' });
+            drained.release();
         });
 
-        await worker.subscribe(listener);
+        const listener = new AsyncMutex();
+        await worker.subscribe((job) => {
+
+            expect(job.args).to.equal({ some: 'data' });
+            listener.release();
+        });
 
         await worker.publish({ some: 'data' });
-        await listener.fired();
+        await listener.acquire();
 
         await worker.publish({ some: 'data' });
-        await listener.fired();
+        await listener.acquire();
 
-        expect(listener.count).to.equal(2);
-
-        await drained.fired();
+        await drained.acquire();
+        await drained.acquire();
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT * from test_jobs');
@@ -436,21 +428,26 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test', timeout: 1 });
         await worker.create();
 
-        const drained = internals.instrument((job) => {});
-        worker.on('drain', drained);
+        const drained = new AsyncMutex();
+        worker.once('drain', () => {
 
-        const listener = internals.instrument(async (job) => {
+            drained.release();
+        });
+
+        const listener = new AsyncMutex();
+        await worker.subscribe(async (job) => {
 
             expect(job.args).to.equal({ some: 'data' });
+            listener.release();
             await timeout(10);
         });
 
-        await worker.subscribe(listener);
-
         await worker.publish({ some: 'data' });
-        await listener.fired();
 
-        await drained.fired();
+        await Promise.all([
+            listener.acquire(),
+            drained.acquire()
+        ]);
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT * FROM test_jobs');
@@ -466,18 +463,19 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const listener = internals.instrument((job) => {
+        const listener = new AsyncMutex();
+        await worker.subscribe((job) => {
 
             expect(job.args).to.equal({ timer: 'data' });
             expect(job.repeat_every).to.not.equal(null);
+            listener.release();
         });
 
-        await worker.subscribe(listener);
-
         await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
-        await listener.fired();
-        await listener.fired();
-        expect(listener.count).to.equal(2);
+        await Promise.all([
+            listener.acquire(),
+            listener.acquire()
+        ]);
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT * FROM test_jobs');
@@ -489,44 +487,83 @@ describe('Porker', () => {
         await worker.end();
     });
 
+    it('can retry a recurring job', async () => {
+
+        const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
+        await worker.create();
+
+        const listener = new AsyncMutex();
+        await worker.subscribe((job) => {
+
+            expect(job.args).to.equal({ timer: 'data' });
+            expect(job.repeat_every).to.not.equal(null);
+            listener.release();
+            throw new Error('Uh oh');
+        });
+
+        const retrier = new AsyncMutex();
+        await worker.retry((job) => {
+
+            expect(job.args).to.equal({ timer: 'data' });
+            expect(job.repeat_every).to.not.equal(null);
+            retrier.release();
+        });
+
+        await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
+        await listener.acquire();
+        await retrier.acquire();
+
+        const db = worker[Symbols.pg];
+        const res = await db.query('SELECT * FROM test_jobs');
+        expect(res.rowCount).to.equal(1);
+        const row = Object.assign({}, res.rows[0]);
+        expect(row).to.contain({ error_count: 1, args: { timer: 'data' } });
+        expect(row.repeat_every).to.not.equal(null);
+
+        await worker.end();
+    });
+
     it('can retry a failed job and reset it', async () => {
 
         const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
         await worker.create();
 
-        const drained = internals.instrument((job) => {});
-        worker.on('drain', drained);
+        const drained = new AsyncMutex();
+        worker.once('drain', () => {
 
-        const drainedRetries = internals.instrument((job) => {});
-        worker.on('drainRetries', drainedRetries);
+            drained.release();
+        });
 
-        const listener = internals.instrument((job) => {
+        const drainedRetries = new AsyncMutex();
+        worker.once('drainRetries', () => {
+
+            drainedRetries.release();
+        });
+
+        const listener = new AsyncMutex();
+        await worker.subscribe((job) => {
 
             expect(job.args).to.equal({ timer: 'data' });
             expect(job.repeat_every).to.not.equal(null);
+            listener.release();
             throw new Error('Uh oh');
         });
 
-        const retrier = internals.instrument((job) => {
+        const retrier = new AsyncMutex();
+        await worker.retry((job) => {
 
             expect(job.args).to.equal({ timer: 'data' });
+            retrier.release();
         });
 
-        await worker.subscribe(listener);
-
         const [id] = await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
-        await listener.fired();
 
-        expect(listener.count).to.equal(1);
-
-        await worker.retry(retrier);
-        await retrier.fired();
-        await drainedRetries.fired(); // fires immediately after adding handler
-
-        expect(retrier.count).to.equal(1);
-
-        await drained.fired();
-        await drainedRetries.fired();
+        await Promise.all([
+            listener.acquire(),
+            drained.acquire(),
+            retrier.acquire(),
+            drainedRetries.acquire()
+        ]);
 
         const db = worker[Symbols.pg];
         const res = await db.query('SELECT * FROM test_jobs');
