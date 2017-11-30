@@ -25,10 +25,10 @@
     "url": "https://github.com/nlf/porker/issues"
   },
   "dependencies": {
-    "pg": "^7.3.0"
+    "pg": "^7.4.0"
   },
   "devDependencies": {
-    "code": "^5.1.0",
-    "lab": "^15.0.0"
+    "code": "^5.1.2",
+    "lab": "^15.1.2"
   }
 }
