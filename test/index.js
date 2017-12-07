@@ -596,14 +596,20 @@ describe('Porker', () => {
         await worker.end();
     });
 
-    it('can retry a failed recurring job and reset', async () => {
+    it('can retry a failed recurring job and reset it', async () => {
 
         const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
         await worker.create();
 
         const drained = new Promise((resolve) => {
 
-            worker.once('drain', resolve);
+            let count = 0;
+            worker.on('drain', () => {
+
+                if (++count === 2) {
+                    resolve();
+                }
+            });
         });
 
         const drainedRetries = new Promise((resolve) => {
@@ -613,11 +619,14 @@ describe('Porker', () => {
 
         const listener = new Promise(async (resolve) => {
 
+            let count = 0;
             await worker.subscribe((job) => {
 
                 expect(job.args).to.equal({ timer: 'data' });
                 expect(job.repeat_every).to.not.equal(null);
-                resolve();
+                if (++count === 2) {
+                    resolve();
+                }
                 throw new Error('Uh oh');
             });
         });
@@ -637,6 +646,7 @@ describe('Porker', () => {
 
         await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
 
+        // publish -> sub (error_count = 1) -> retry (error_count = 0) -> sub (error_count = 1) -> retry (error_count = 0)
         await Promise.all([
             listener,
             drained,
@@ -754,6 +764,8 @@ describe('Porker', () => {
 
         const worker = new Porker({ connection, queue: 'test', healthcheckPort: 4500 });
 
+        worker[Symbols.subscriber] = async () => {};
+
         try {
             await get(`http://localhost:${worker.healthcheckPort}`);
             fail('this should not be reachable');
@@ -762,7 +774,7 @@ describe('Porker', () => {
             expect(err.statusCode).to.equal(400);
         }
 
-        worker[Symbols.healthcheck].close();
+        await worker.end();
     });
 
     it('returns 200 on healthcheck when connected', async () => {
@@ -770,6 +782,7 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test', healthcheckPort: 4500 });
 
         await worker.create();
+        await worker.subscribe(() => {});
 
         // why this throws even for a 200, i have no idea
         try {

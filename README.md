@@ -14,7 +14,7 @@ Creates and returns a new worker.
 - `errorThreshold`: (optional) Maximum `error_count` a job can have to be received by the retry handler if one is specified, defaults to `1`
 - `retryDelay`: (optional) Interval to wait between failure and retry attempt, specified as a Postgres interval string, defaults to `'5 minutes'`
 - `timeout`: (optional) Maximum time a worker function can run before a job will be flagged as an error and returned to the queue, defaults to `15000` (15 seconds)
-- `concurrency`: (optional) How many jobs to process simultaneously, defaults to `1`
+- `concurrency`: (optional) Maximum number of jobs to process simultaneously, defaults to `1`.
 - `healthcheckPort`: (optional) If defined, will start a simple healthcheck listener on this port. Returns an HTTP 200 when the worker is connected to postgres, and a 400 when not. Defaults to `null`
 
 #### `porker.connect()`
