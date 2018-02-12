@@ -18,7 +18,7 @@ const { expect, fail } = Code;
 
 describe('Porker', () => {
 
-    const connection = process.env.PORKER_CONNECTION ? { connectionString: process.env.PORKER_CONNECTION } : { database: 'porker_test_suite' };
+    const connection = process.env.PORKER_CONNECTION || { database: 'porker_test_suite' };
 
     afterEach(async () => {
 
@@ -36,6 +36,14 @@ describe('Porker', () => {
         }
         await client.query('COMMIT');
         await client.end();
+    });
+
+    it('accepts strings for connection settings', () => {
+
+        expect(() => {
+
+            new Porker({ connection: 'postgres://localhost/porker_test_suite', queue: 'test' });
+        }).to.not.throw();
     });
 
     it('throws when no queue is specified', () => {
