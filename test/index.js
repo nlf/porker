@@ -6,8 +6,8 @@ const Symbols = require('../lib/symbols');
 const Http = require('http');
 const Pg = require('pg');
 
-const Code = require('code');
-const Lab = require('lab');
+const Code = require('@hapi/code');
+const Lab = require('@hapi/lab');
 const Util = require('util');
 
 const get = Util.promisify(Http.get);
@@ -34,6 +34,7 @@ describe('Porker', () => {
         for (const row of res.rows) {
             await client.query(row.drop_sequence);
         }
+
         await client.query('COMMIT');
         await client.end();
     });
@@ -377,6 +378,7 @@ describe('Porker', () => {
                 if (++count === 2) {
                     resolve();
                 }
+
                 throw new Error('Uh oh');
             });
         });
@@ -638,6 +640,7 @@ describe('Porker', () => {
                 if (++count === 1) {
                     throw new Error('Uh oh');
                 }
+
                 if (count === 2) {
                     return resolve();
                 }
