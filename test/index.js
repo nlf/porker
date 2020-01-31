@@ -612,6 +612,7 @@ describe('Porker', () => {
         const drained = new Promise((resolve) => {
 
             let count = 0;
+            // should fire twice
             worker.on('drain', () => {
 
                 if (++count === 2) {
@@ -622,39 +623,40 @@ describe('Porker', () => {
 
         const drainedRetries = new Promise((resolve) => {
 
+            // should fire once
             worker.once('drainRetries', resolve);
         });
 
         const listener = new Promise(async (resolve) => {
 
             let count = 0;
+            // should fire twice
             await worker.subscribe((job) => {
 
                 expect(job.args).to.equal({ timer: 'data' });
                 expect(job.repeat_every).to.not.equal(null);
-                if (++count === 2) {
-                    resolve();
+                if (++count === 1) {
+                    throw new Error('Uh oh');
                 }
-                throw new Error('Uh oh');
+                if (count === 2) {
+                    return resolve();
+                }
             });
         });
 
         const retrier = new Promise(async (resolve) => {
 
-            let count = 0;
+            // should fire once
             await worker.retry((job) => {
 
                 expect(job.args).to.equal({ timer: 'data' });
                 expect(job.repeat_every).to.not.equal(null);
-                if (++count === 2) {
-                    resolve();
-                }
+                resolve();
             });
         });
 
         await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
 
-        // publish -> sub (error_count = 1) -> retry (error_count = 0) -> sub (error_count = 1) -> retry (error_count = 0)
         await Promise.all([
             listener,
             drained,
@@ -666,64 +668,9 @@ describe('Porker', () => {
         const res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(1);
         const row = Object.assign({}, res.rows[0]);
-        expect(row).to.contain({ error_count: 1, args: { timer: 'data' } });
+        // error_count will be 0 because we fail once setting it to 1, retry setting it back to 0, then run a second time keeping the 0
+        expect(row).to.contain({ error_count: 0, args: { timer: 'data' } });
         expect(row.repeat_every).to.not.equal(null);
-
-        await worker.end();
-    });
-
-    it('can retry a failed job and reset it', async () => {
-
-        const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        const drainedRetries = new Promise((resolve) => {
-
-            worker.once('drainRetries', resolve);
-        });
-
-        const listener = new Promise(async (resolve) => {
-
-            await worker.subscribe((job) => {
-
-                expect(job.args).to.equal({ timer: 'data' });
-                expect(job.repeat_every).to.not.equal(null);
-                resolve();
-                throw new Error('Uh oh');
-            });
-        });
-
-        const retrier = new Promise(async (resolve) => {
-
-            await worker.retry((job) => {
-
-                expect(job.args).to.equal({ timer: 'data' });
-                resolve();
-            });
-        });
-
-        const [id] = await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
-
-        await Promise.all([
-            listener,
-            drained,
-            retrier,
-            drainedRetries
-        ]);
-
-        const db = worker[Symbols.client];
-        const res = await db.query('SELECT * FROM test_jobs');
-        expect(res.rowCount).to.equal(1);
-        const row = Object.assign({}, res.rows[0]);
-        expect(row.id).to.equal(id);
-        expect(row.error_count).to.equal(0);
-        expect(row.repeat_every).to.not.equal(null);
-        expect(row.retry_at).to.equal(null);
 
         await worker.end();
     });
