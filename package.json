@@ -1,6 +1,6 @@
 {
   "name": "porker",
-  "version": "2.4.1",
+  "version": "2.5.0",
   "description": "because it's a worker, but for postgres",
   "main": "lib/index.js",
   "scripts": {
