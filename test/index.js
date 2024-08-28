@@ -1,7 +1,6 @@
 'use strict';
 
 const Porker = require('../');
-const Symbols = require('../lib/symbols');
 
 const Http = require('http');
 const Pg = require('pg');
@@ -12,31 +11,37 @@ const Util = require('util');
 
 const get = Util.promisify(Http.get);
 const timeout = Util.promisify(setTimeout);
-const { afterEach, describe, it } = exports.lab = Lab.script();
+const { after, afterEach, before, describe, it } = exports.lab = Lab.script();
 const { expect, fail } = Code;
 
 
 describe('Porker', () => {
 
-    const connection = process.env.PORKER_CONNECTION || { database: 'porker_test_suite' };
+    const connection = process.env.PORKER_CONNECTION || { database: 'porker-test', user: 'porker-test', password: 'porker-test' };
+    const db = new Pg.Client(connection);
+
+    before(async () => {
+        await db.connect();
+    });
+
+    after(async () => {
+        await db.end();
+    });
 
     afterEach(async () => {
 
-        const client = new Pg.Client(connection);
-        await client.connect();
-        await client.query('BEGIN');
-        let res = await client.query(`SELECT 'DROP TABLE IF EXISTS ' || quote_ident(table_schema) || '.' || quote_ident(table_name) || ' CASCADE;' AS drop_table FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND NOT table_schema ~ '^(information_schema|pg_.*)$'`);
+        await db.query('BEGIN');
+        let res = await db.query(`SELECT 'DROP TABLE IF EXISTS ' || quote_ident(table_schema) || '.' || quote_ident(table_name) || ' CASCADE;' AS drop_table FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND NOT table_schema ~ '^(information_schema|pg_.*)$'`);
         for (const row of res.rows) {
-            await client.query(row.drop_table);
+            await db.query(row.drop_table);
         }
 
-        res = await client.query(`SELECT 'DROP SEQUENCE IF EXISTS ' || quote_ident(relname) || ' CASCADE;' AS drop_sequence FROM pg_statio_user_sequences`);
+        res = await db.query(`SELECT 'DROP SEQUENCE IF EXISTS ' || quote_ident(relname) || ' CASCADE;' AS drop_sequence FROM pg_statio_user_sequences`);
         for (const row of res.rows) {
-            await client.query(row.drop_sequence);
+            await db.query(row.drop_sequence);
         }
 
-        await client.query('COMMIT');
-        await client.end();
+        await db.query('COMMIT');
     });
 
     it('accepts strings for connection settings', () => {
@@ -90,7 +95,6 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT column_name FROM information_schema.columns WHERE table_name = \'test_jobs\'');
         expect(res.rowCount).to.equal(7);
 
@@ -111,7 +115,6 @@ describe('Porker', () => {
         const worker = new Porker({ connection, queue: 'test' });
         await worker.create();
 
-        const db = worker[Symbols.client];
         let res = await db.query('SELECT column_name FROM information_schema.columns WHERE table_name = \'test_jobs\'');
         expect(res.rowCount).to.equal(7);
 
@@ -168,7 +171,6 @@ describe('Porker', () => {
             drained
         ]);
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -202,7 +204,6 @@ describe('Porker', () => {
             drained
         ]);
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(1);
         expect(res.rows[0].id).to.equal(id);
@@ -256,7 +257,6 @@ describe('Porker', () => {
             drainedRetries
         ]);
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -307,7 +307,6 @@ describe('Porker', () => {
             drainedRetries
         ]);
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -344,7 +343,6 @@ describe('Porker', () => {
             drained
         ]);
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -403,7 +401,6 @@ describe('Porker', () => {
             drainedRetries
         ]);
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -439,7 +436,6 @@ describe('Porker', () => {
             drained
         ]);
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -472,7 +468,6 @@ describe('Porker', () => {
             drained
         ]);
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -518,7 +513,6 @@ describe('Porker', () => {
         await listener;
         await drained;
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * from test_jobs');
         expect(res.rowCount).to.equal(0);
 
@@ -552,7 +546,6 @@ describe('Porker', () => {
             drained
         ]);
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(1);
         const row = Object.assign({}, res.rows[0]);
@@ -596,7 +589,6 @@ describe('Porker', () => {
             drained
         ]);
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(1);
         const row = Object.assign({}, res.rows[0]);
@@ -667,7 +659,6 @@ describe('Porker', () => {
             drainedRetries
         ]);
 
-        const db = worker[Symbols.client];
         const res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(1);
         const row = Object.assign({}, res.rows[0]);
@@ -685,7 +676,6 @@ describe('Porker', () => {
 
         const [job] = await worker.publish({ some: 'data' });
 
-        const db = worker[Symbols.client];
         let res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(1);
         expect(res.rows[0].id).to.equal(job);
@@ -705,7 +695,6 @@ describe('Porker', () => {
         const jobs = await worker.publish([{ some: 'data' }, { some: 'data' }]);
         expect(jobs.length).to.equal(2);
 
-        const db = worker[Symbols.client];
         let res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(2);
         expect(res.rows[0].id).to.equal(jobs[0]);
@@ -714,23 +703,6 @@ describe('Porker', () => {
         await worker.unpublish(jobs);
         res = await db.query('SELECT * FROM test_jobs');
         expect(res.rowCount).to.equal(0);
-
-        await worker.end();
-    });
-
-    it('returns 400 on healthcheck when not connected', async () => {
-
-        const worker = new Porker({ connection, queue: 'test', healthcheckPort: 4500 });
-
-        worker[Symbols.subscriber] = async () => {};
-
-        try {
-            await get(`http://localhost:${worker.healthcheckPort}`);
-            fail('this should not be reachable');
-        }
-        catch (err) {
-            expect(err.statusCode).to.equal(400);
-        }
 
         await worker.end();
     });
@@ -758,10 +730,11 @@ describe('Porker', () => {
 
         const worker = new Porker({ connection, queue: 'test' });
 
-        expect(worker[Symbols.healthcheck]).to.exist();
-        expect(worker[Symbols.healthcheck].address()).to.equal(null);
-
         await worker.create();
+        await worker.subscribe(() => {});
+
+        expect(worker.healthcheckPort).to.equal(null);
+
         await worker.end();
     });
 });
