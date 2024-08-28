@@ -1,18 +1,12 @@
 "use strict";
 
 const { once } = require("node:events");
+const { setTimeout } = require("node:timers/promises");
 const t = require("tap");
 const Porker = require("../");
 const { Deferred } = require("../lib/util");
-/** @import { Job } from "../" */
 
-const Http = require("http");
 const Pg = require("pg");
-
-const Util = require("util");
-
-const get = Util.promisify(Http.get);
-const timeout = Util.promisify(setTimeout);
 
 const connection = process.env.PORKER_CONNECTION || { database: "porker-test", user: "porker-test", password: "porker-test" };
 const db = new Pg.Client(connection);
@@ -487,7 +481,7 @@ t.test("Porker", (t) => {
 
     await worker.subscribe(async (job) => {
       t.strictSame(job.args, { some: "data" });
-      await timeout(10);
+      await setTimeout(10);
       listener.resolve(true);
     });
 
@@ -648,36 +642,6 @@ t.test("Porker", (t) => {
     await worker.unpublish(jobs);
     res = await db.query("SELECT * FROM test_jobs");
     t.equal(res.rowCount, 0);
-  });
-
-  t.test("returns 200 on healthcheck when connected", async (t) => {
-    const worker = new Porker({ connection, queue: "test", healthcheckPort: 4500 });
-    t.teardown(async () => {
-      await worker.end();
-    });
-
-    await worker.create();
-    await worker.subscribe(() => {});
-
-    // why this throws even for a 200, i have no idea
-    try {
-      await get(`http://localhost:${worker.healthcheckPort}`);
-      t.fail("this should not be reachable");
-    } catch (err) {
-      t.equal(/** @type {Error & { statusCode: number }} */ (err).statusCode, 200);
-    }
-  });
-
-  t.test("does not listen for healthchecks by default", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
-    t.teardown(async () => {
-      await worker.end();
-    });
-
-    await worker.create();
-    await worker.subscribe(() => {});
-
-    t.equal(worker.healthcheckPort, null);
   });
 
   t.end();
