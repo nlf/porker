@@ -1,0 +1,10 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: porker-test
+      POSTGRES_USER: porker-test
+      POSTGRES_PASSWORD: porker-test
