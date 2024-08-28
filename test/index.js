@@ -1,742 +1,684 @@
-'use strict';
+"use strict";
 
-const Porker = require('../');
+const { once } = require("node:events");
+const t = require("tap");
+const Porker = require("../");
+const { Deferred } = require("../lib/util");
+/** @import { Job } from "../" */
 
-const Http = require('http');
-const Pg = require('pg');
+const Http = require("http");
+const Pg = require("pg");
 
-const Code = require('@hapi/code');
-const Lab = require('@hapi/lab');
-const Util = require('util');
+const Util = require("util");
 
 const get = Util.promisify(Http.get);
 const timeout = Util.promisify(setTimeout);
-const { after, afterEach, before, describe, it } = exports.lab = Lab.script();
-const { expect, fail } = Code;
 
+const connection = process.env.PORKER_CONNECTION || { database: "porker-test", user: "porker-test", password: "porker-test" };
+const db = new Pg.Client(connection);
 
-describe('Porker', () => {
+t.test("Porker", (t) => {
+  t.before(async () => {
+    await db.connect();
+  });
 
-    const connection = process.env.PORKER_CONNECTION || { database: 'porker-test', user: 'porker-test', password: 'porker-test' };
-    const db = new Pg.Client(connection);
+  t.after(async () => {
+    await db.end();
+  });
 
-    before(async () => {
+  t.afterEach(async () => {
+    await db.query("BEGIN");
+    let res = await db.query(`SELECT 'DROP TABLE IF EXISTS ' || quote_ident(table_schema) || '.' || quote_ident(table_name) || ' CASCADE;' AS drop_table FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND NOT table_schema ~ '^(information_schema|pg_.*)$'`);
+    for (const row of res.rows) {
+      await db.query(row.drop_table);
+    }
 
-        await db.connect();
+    res = await db.query(`SELECT 'DROP SEQUENCE IF EXISTS ' || quote_ident(relname) || ' CASCADE;' AS drop_sequence FROM pg_statio_user_sequences`);
+    for (const row of res.rows) {
+      await db.query(row.drop_sequence);
+    }
+
+    await db.query("COMMIT");
+  });
+
+  t.test("accepts strings for connection settings", (t) => {
+    t.doesNotThrow(() => {
+      new Porker({ connection: "postgres://localhost/porker_test_suite", queue: "test" });
     });
 
-    after(async () => {
+    t.end();
+  });
 
-        await db.end();
+  t.test("throws when no queue is specified", (t) => {
+    t.throws(() => {
+      new Porker();
+    }, "Missing required parameter: queue");
+
+    t.end();
+  });
+
+  t.test("throws when a subscriber is added twice", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
     });
 
-    afterEach(async () => {
+    await worker.create();
 
-        await db.query('BEGIN');
-        let res = await db.query(`SELECT 'DROP TABLE IF EXISTS ' || quote_ident(table_schema) || '.' || quote_ident(table_name) || ' CASCADE;' AS drop_table FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND NOT table_schema ~ '^(information_schema|pg_.*)$'`);
-        for (const row of res.rows) {
-            await db.query(row.drop_table);
+    await worker.subscribe(async () => {});
+    await t.rejects(worker.subscribe(async () => {}), "A subscriber has already been added to this queue");
+  });
+
+  t.test("throws when retrier is added twice", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    await worker.retry(async () => {});
+    await t.rejects(worker.retry(async () => {}), "A retry handler has already been added to this queue");
+  });
+
+  t.test("does not throw when queues have a dash", async (t) => {
+    const worker = new Porker({ connection, queue: "test-queue" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await t.resolves(worker.create());
+  });
+
+  t.test("can create its own table", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'test_jobs'");
+    t.equal(res.rowCount, 7);
+
+    const rows = res.rows.reduce((acc, row) => [...acc, row.column_name], []);
+    t.strictSame(rows, ["id", "priority", "started_at", "repeat_every", "error_count", "args", "retry_at"]);
+  });
+
+  t.test("can drop its own table", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    let res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'test_jobs'");
+    t.equal(res.rowCount, 7);
+
+    const rows = res.rows.reduce((acc, row) => [...acc, row.column_name], []);
+    t.strictSame(rows, ["id", "priority", "started_at", "repeat_every", "error_count", "args", "retry_at"]);
+
+    await worker.drop();
+    res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'test_jobs'");
+    t.equal(res.rowCount, 0);
+  });
+
+  t.test("can end without a client connection", async (t) => {
+    let worker = new Porker({ connection, queue: "test" });
+
+    await worker.create();
+    await worker.end();
+
+    worker = new Porker({ connection, queue: "test" });
+    await worker.subscribe(() => {});
+
+    await t.resolves(worker.end());
+  });
+
+  t.test("can handle a single job", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      worker.once("drain", resolve);
+    });
+
+    await worker.publish({ some: "data" });
+
+    const listener = new Deferred();
+
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { some: "data" });
+      listener.resolve(true);
+    });
+
+    await Promise.all([
+      listener.promise,
+      drained,
+    ]);
+
+    const res = await db.query("SELECT * from test_jobs");
+    t.equal(res.rowCount, 0);
+  });
+
+  t.test("can handle a failing job", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      worker.once("drain", resolve);
+    });
+
+    const [id] = await worker.publish({ some: "data" });
+
+    const listener = new Deferred();
+
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { some: "data" });
+      listener.resolve(true);
+      throw new Error("Uh oh");
+    });
+
+    await Promise.all([
+      listener.promise,
+      drained,
+    ]);
+
+    const res = await db.query("SELECT * from test_jobs");
+    t.equal(res.rowCount, 1);
+    t.equal(res.rows[0].id, id);
+    t.equal(res.rows[0].error_count, 1);
+    t.ok(res.rows[0].retry_at > new Date());
+  });
+
+  t.test("can retry a failed job", async (t) => {
+    const worker = new Porker({ connection, queue: "test", retryDelay: "10 milliseconds" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      worker.once("drain", resolve);
+    });
+
+    const drainedRetries = new Promise((resolve) => {
+      worker.once("drainRetries", resolve);
+    });
+
+    const listener = new Deferred();
+
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { some: "data" });
+      listener.resolve(true);
+      throw new Error("Uh oh");
+    });
+
+    const retrier = new Deferred();
+
+    await worker.retry((job) => {
+      t.strictSame(job.args, { some: "data" });
+      t.equal(job.error_count, 1);
+      retrier.resolve(true);
+    });
+
+    await worker.publish({ some: "data" });
+
+    await Promise.all([
+      listener.promise,
+      retrier.promise,
+      drained,
+      drainedRetries,
+    ]);
+
+    const res = await db.query("SELECT * from test_jobs");
+    t.equal(res.rowCount, 0);
+  });
+
+  t.test("can retry a failed job with a delay", async (t) => {
+    const worker = new Porker({ connection, queue: "test", retryDelay: "150 milliseconds" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      worker.once("drain", resolve);
+    });
+
+    const drainedRetries = new Promise((resolve) => {
+      worker.once("drainRetries", resolve);
+    });
+
+    const listener = new Deferred();
+
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { some: "data" });
+      listener.resolve(true);
+      throw new Error("Uh oh");
+    });
+
+    const retrier = new Deferred();
+
+    await worker.retry((job) => {
+      t.strictSame(job.args, { some: "data" });
+      t.equal(job.error_count, 1);
+      retrier.resolve(true);
+    });
+
+    await worker.publish({ some: "data" });
+
+    await Promise.all([
+      listener.promise,
+      retrier.promise,
+      drained,
+      drainedRetries,
+    ]);
+
+    const res = await db.query("SELECT * from test_jobs");
+    t.equal(res.rowCount, 0);
+  });
+
+  t.test("can handle two jobs", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      worker.once("drain", resolve);
+    });
+
+    await worker.publish({ some: "data" });
+    await worker.publish({ some: "data" });
+
+    const listener = new Deferred();
+
+    let count = 0;
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { some: "data" });
+      if (++count === 2) {
+        listener.resolve(true);
+      }
+    });
+
+    await Promise.all([
+      listener.promise,
+      drained,
+    ]);
+
+    const res = await db.query("SELECT * from test_jobs");
+    t.equal(res.rowCount, 0);
+  });
+
+  t.test("can retry two failed jobs", async (t) => {
+    const worker = new Porker({ connection, queue: "test", retryDelay: "1 millisecond" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      worker.once("drain", resolve);
+    });
+
+    const drainedRetries = new Promise((resolve) => {
+      worker.once("drainRetries", resolve);
+    });
+
+    await worker.publish({ some: "data" });
+    await worker.publish({ some: "data" });
+
+    const listener = new Deferred();
+
+    let listenerCount = 0;
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { some: "data" });
+      if (++listenerCount === 2) {
+        listener.resolve(true);
+      }
+
+      throw new Error("Uh oh");
+    });
+
+    const retrier = new Deferred();
+
+    let retrierCount = 0;
+    await worker.retry((job) => {
+      t.strictSame(job.args, { some: "data" });
+      t.equal(job.error_count, 1);
+      if (++retrierCount === 2) {
+        retrier.resolve(true);
+      }
+    });
+
+    await Promise.all([
+      listener.promise,
+      drained,
+      retrier.promise,
+      drainedRetries,
+    ]);
+
+    const res = await db.query("SELECT * from test_jobs");
+    t.equal(res.rowCount, 0);
+  });
+
+  t.test("can bulk publish jobs", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      worker.once("drain", resolve);
+    });
+
+    await worker.publish([{ some: "data" }, { some: "data" }]);
+
+    const listener = new Deferred();
+
+    let count = 0;
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { some: "data" });
+      if (++count === 2) {
+        listener.resolve(true);
+      }
+    });
+
+    await Promise.all([
+      listener.promise,
+      drained,
+    ]);
+
+    const res = await db.query("SELECT * from test_jobs");
+    t.equal(res.rowCount, 0);
+  });
+
+  t.test("can handle a publish after a subscription", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      worker.once("drain", resolve);
+    });
+
+    const listener = new Deferred();
+
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { some: "data" });
+      listener.resolve(true);
+    });
+
+    await worker.publish({ some: "data" });
+
+    await Promise.all([
+      listener.promise,
+      drained,
+    ]);
+
+    const res = await db.query("SELECT * from test_jobs");
+    t.equal(res.rowCount, 0);
+  });
+
+  t.test("can handle two publishes after a subscription", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+    const eventOne = new Deferred();
+    const eventTwo = new Deferred();
+    const events = [eventOne, eventTwo];
+
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { some: "data" });
+      if (events.length) {
+        const event = /** @type {Deferred} */ (events.shift());
+        event.resolve(true);
+      }
+    });
+
+    await worker.publish({ some: "data" });
+    await eventOne.promise;
+    await once(worker, "drain");
+
+    await worker.publish({ some: "data" });
+    await eventTwo.promise;
+    await once(worker, "drain");
+
+    const res = await db.query("SELECT * from test_jobs");
+    t.equal(res.rowCount, 0);
+  });
+
+  t.test("can timeout a job", async (t) => {
+    const worker = new Porker({ connection, queue: "test", timeout: 1 });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      worker.once("drain", resolve);
+    });
+
+    const listener = new Deferred();
+
+    await worker.subscribe(async (job) => {
+      t.strictSame(job.args, { some: "data" });
+      await timeout(10);
+      listener.resolve(true);
+    });
+
+    await worker.publish({ some: "data" });
+
+    await Promise.all([
+      listener.promise,
+      drained,
+    ]);
+
+    const res = await db.query("SELECT * FROM test_jobs");
+    t.equal(res.rowCount, 1);
+    const row = Object.assign({}, res.rows[0]);
+    t.hasStrict(row, { error_count: 1, args: { some: "data" } });
+  });
+
+  t.test("can create a recurring job", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      let count = 0;
+      worker.on("drain", () => {
+        if (++count === 2) {
+          resolve(true);
         }
+      });
+    });
 
-        res = await db.query(`SELECT 'DROP SEQUENCE IF EXISTS ' || quote_ident(relname) || ' CASCADE;' AS drop_sequence FROM pg_statio_user_sequences`);
-        for (const row of res.rows) {
-            await db.query(row.drop_sequence);
+    const listener = new Deferred();
+
+    let count = 0;
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { timer: "data" });
+      t.not(job.repeat_every, null);
+      if (++count === 2) {
+        listener.resolve(true);
+      }
+    });
+
+    await worker.publish({ timer: "data" }, { repeat: "100 milliseconds" });
+    await Promise.all([
+      listener.promise,
+      drained,
+    ]);
+
+    const res = await db.query("SELECT * FROM test_jobs");
+    t.equal(res.rowCount, 1);
+    const row = Object.assign({}, res.rows[0]);
+    t.hasStrict(row, { error_count: 0, args: { timer: "data" } });
+    t.not(row.repeat_every, null);
+  });
+
+  t.test("can retry a failed recurring job and reset it", async (t) => {
+    const worker = new Porker({ connection, queue: "test", retryDelay: "10 milliseconds" });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      let count = 0;
+      // should fire twice
+      worker.on("drain", () => {
+        if (++count === 2) {
+          resolve(true);
         }
-
-        await db.query('COMMIT');
+      });
     });
 
-    it('accepts strings for connection settings', () => {
-
-        expect(() => {
-
-            new Porker({ connection: 'postgres://localhost/porker_test_suite', queue: 'test' });
-        }).to.not.throw();
+    const drainedRetries = new Promise((resolve) => {
+      // should fire once
+      worker.once("drainRetries", resolve);
     });
 
-    it('throws when no queue is specified', () => {
+    const listener = new Deferred();
 
-        expect(() => {
+    let count = 0;
+    // should fire twice
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { timer: "data" });
+      t.not(job.repeat_every, null);
+      if (++count === 1) {
+        throw new Error("Uh oh");
+      }
 
-            new Porker();
-        }).to.throw('Missing required parameter: queue');
+      if (count === 2) {
+        return listener.resolve(true);
+      }
     });
 
-    it('throws when a subscriber is added twice', async () => {
+    const retrier = new Deferred();
 
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
-
-        await worker.subscribe(async () => {});
-        await expect(worker.subscribe(async () => {})).to.reject('A subscriber has already been added to this queue');
-
-        await worker.end();
+    // should fire once
+    await worker.retry((job) => {
+      t.strictSame(job.args, { timer: "data" });
+      t.not(job.repeat_every, null);
+      retrier.resolve(true);
     });
 
-    it('throws when retrier is added twice', async () => {
+    await worker.publish({ timer: "data" }, { repeat: "100 milliseconds" });
 
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
+    await Promise.all([
+      listener.promise,
+      drained,
+      retrier.promise,
+      drainedRetries,
+    ]);
 
-        await worker.retry(async () => {});
-        await expect(worker.retry(async () => {})).to.reject('A retry handler has already been added to this queue');
+    const res = await db.query("SELECT * FROM test_jobs");
+    t.equal(res.rowCount, 1);
+    const row = Object.assign({}, res.rows[0]);
+    // error_count will be 0 because we fail once setting it to 1, retry setting it back to 0, then run a second time keeping the 0
+    t.hasStrict(row, { error_count: 0, args: { timer: "data" } });
+    t.not(row.repeat_every, null);
+  });
 
-        await worker.end();
+  t.test("can unpublish a job", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
     });
 
-    it('does not throw when queues have a dash', async () => {
+    await worker.create();
 
-        const worker = new Porker({ connection, queue: 'test-queue' });
-        await expect(worker.create()).to.not.reject();
+    const [job] = await worker.publish({ some: "data" });
 
-        await worker.end();
+    let res = await db.query("SELECT * FROM test_jobs");
+    t.equal(res.rowCount, 1);
+    t.equal(res.rows[0].id, job);
+
+    await worker.unpublish(job);
+    res = await db.query("SELECT * FROM test_jobs");
+    t.equal(res.rowCount, 0);
+  });
+
+  t.test("can bulk unpublish jobs", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
     });
 
-    it('can create its own table', async () => {
+    await worker.create();
 
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
+    const jobs = await worker.publish([{ some: "data" }, { some: "data" }]);
+    t.equal(jobs.length, 2);
 
-        const res = await db.query('SELECT column_name FROM information_schema.columns WHERE table_name = \'test_jobs\'');
-        expect(res.rowCount).to.equal(7);
+    let res = await db.query("SELECT * FROM test_jobs");
+    t.equal(res.rowCount, 2);
+    t.equal(res.rows[0].id, jobs[0]);
+    t.equal(res.rows[1].id, jobs[1]);
 
-        const rows = res.rows.map((row) => Object.assign({}, row));
-        expect(rows).to.contain({ column_name: 'id' });
-        expect(rows).to.contain({ column_name: 'priority' });
-        expect(rows).to.contain({ column_name: 'started_at' });
-        expect(rows).to.contain({ column_name: 'repeat_every' });
-        expect(rows).to.contain({ column_name: 'error_count' });
-        expect(rows).to.contain({ column_name: 'retry_at' });
-        expect(rows).to.contain({ column_name: 'args' });
+    await worker.unpublish(jobs);
+    res = await db.query("SELECT * FROM test_jobs");
+    t.equal(res.rowCount, 0);
+  });
 
-        await worker.end();
+  t.test("returns 200 on healthcheck when connected", async (t) => {
+    const worker = new Porker({ connection, queue: "test", healthcheckPort: 4500 });
+    t.teardown(async () => {
+      await worker.end();
     });
 
-    it('can drop its own table', async () => {
+    await worker.create();
+    await worker.subscribe(() => {});
 
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
+    // why this throws even for a 200, i have no idea
+    try {
+      await get(`http://localhost:${worker.healthcheckPort}`);
+      t.fail("this should not be reachable");
+    } catch (err) {
+      t.equal(/** @type {Error & { statusCode: number }} */ (err).statusCode, 200);
+    }
+  });
 
-        let res = await db.query('SELECT column_name FROM information_schema.columns WHERE table_name = \'test_jobs\'');
-        expect(res.rowCount).to.equal(7);
-
-        const rows = res.rows.map((row) => Object.assign({}, row));
-        expect(rows).to.contain({ column_name: 'id' });
-        expect(rows).to.contain({ column_name: 'priority' });
-        expect(rows).to.contain({ column_name: 'started_at' });
-        expect(rows).to.contain({ column_name: 'repeat_every' });
-        expect(rows).to.contain({ column_name: 'error_count' });
-        expect(rows).to.contain({ column_name: 'retry_at' });
-        expect(rows).to.contain({ column_name: 'args' });
-
-        await worker.drop();
-        res = await db.query('SELECT column_name FROM information_schema.columns WHERE table_name = \'test_jobs\'');
-        expect(res.rowCount).to.equal(0);
-        await worker.end();
+  t.test("does not listen for healthchecks by default", async (t) => {
+    const worker = new Porker({ connection, queue: "test" });
+    t.teardown(async () => {
+      await worker.end();
     });
 
-    it('can end without a client connection', async () => {
+    await worker.create();
+    await worker.subscribe(() => {});
 
-        let worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
-        await worker.end();
+    t.equal(worker.healthcheckPort, null);
+  });
 
-        worker = new Porker({ connection, queue: 'test' });
-        await worker.subscribe(() => {});
-
-        await worker.end();
-    });
-
-    it('can handle a single job', async () => {
-
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        await worker.publish({ some: 'data' });
-
-        const listener = new Promise(async (resolve) => {
-
-            await worker.subscribe((job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                resolve();
-            });
-        });
-
-        await Promise.all([
-            listener,
-            drained
-        ]);
-
-        const res = await db.query('SELECT * from test_jobs');
-        expect(res.rowCount).to.equal(0);
-
-        await worker.end();
-    });
-
-    it('can handle a failing job', async () => {
-
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        const [id] = await worker.publish({ some: 'data' });
-
-        const listener = new Promise(async (resolve) => {
-
-            await worker.subscribe((job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                resolve();
-                throw new Error('Uh oh');
-            });
-        });
-
-        await Promise.all([
-            listener,
-            drained
-        ]);
-
-        const res = await db.query('SELECT * from test_jobs');
-        expect(res.rowCount).to.equal(1);
-        expect(res.rows[0].id).to.equal(id);
-        expect(res.rows[0].error_count).to.equal(1);
-        expect(res.rows[0].retry_at).to.be.above(new Date());
-
-        await worker.end();
-    });
-
-    it('can retry a failed job', async () => {
-
-        const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        const drainedRetries = new Promise((resolve) => {
-
-            worker.once('drainRetries', resolve);
-        });
-
-        const listener = new Promise(async (resolve) => {
-
-            await worker.subscribe((job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                resolve();
-                throw new Error('Uh oh');
-            });
-        });
-
-        const retrier = new Promise(async (resolve) => {
-
-            await worker.retry((job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                expect(job.error_count).to.equal(1);
-                resolve();
-            });
-        });
-
-        await worker.publish({ some: 'data' });
-
-        await Promise.all([
-            listener,
-            retrier,
-            drained,
-            drainedRetries
-        ]);
-
-        const res = await db.query('SELECT * from test_jobs');
-        expect(res.rowCount).to.equal(0);
-
-        await worker.end();
-    });
-
-    it('can retry a failed job with a delay', async () => {
-
-        const worker = new Porker({ connection, queue: 'test', retryDelay: '150 milliseconds' });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        const drainedRetries = new Promise((resolve) => {
-
-            worker.once('drainRetries', resolve);
-        });
-
-        const listener = new Promise(async (resolve) => {
-
-            await worker.subscribe((job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                resolve();
-                throw new Error('Uh oh');
-            });
-        });
-
-        const retrier = new Promise(async (resolve) => {
-
-            await worker.retry((job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                expect(job.error_count).to.equal(1);
-                resolve();
-            });
-        });
-
-        await worker.publish({ some: 'data' });
-
-        await Promise.all([
-            listener,
-            retrier,
-            drained,
-            drainedRetries
-        ]);
-
-        const res = await db.query('SELECT * from test_jobs');
-        expect(res.rowCount).to.equal(0);
-
-        await worker.end();
-    });
-
-    it('can handle two jobs', async () => {
-
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        await worker.publish({ some: 'data' });
-        await worker.publish({ some: 'data' });
-
-        const listener = new Promise(async (resolve) => {
-
-            let count = 0;
-            await worker.subscribe((job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                if (++count === 2) {
-                    resolve();
-                }
-            });
-        });
-
-        await Promise.all([
-            listener,
-            drained
-        ]);
-
-        const res = await db.query('SELECT * from test_jobs');
-        expect(res.rowCount).to.equal(0);
-
-        await worker.end();
-    });
-
-    it('can retry two failed jobs', async () => {
-
-        const worker = new Porker({ connection, queue: 'test', retryDelay: '1 millisecond' });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        const drainedRetries = new Promise((resolve) => {
-
-            worker.on('drainRetries', resolve);
-        });
-
-        await worker.publish({ some: 'data' });
-        await worker.publish({ some: 'data' });
-
-        const listener = new Promise(async (resolve) => {
-
-            let count = 0;
-            await worker.subscribe((job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                if (++count === 2) {
-                    resolve();
-                }
-
-                throw new Error('Uh oh');
-            });
-        });
-
-        const retrier = new Promise(async (resolve) => {
-
-            let count = 0;
-            await worker.retry((job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                expect(job.error_count).to.equal(1);
-                if (++count === 2) {
-                    resolve();
-                }
-            });
-        });
-
-        await Promise.all([
-            listener,
-            drained,
-            retrier,
-            drainedRetries
-        ]);
-
-        const res = await db.query('SELECT * from test_jobs');
-        expect(res.rowCount).to.equal(0);
-
-        await worker.end();
-    });
-
-    it('can bulk publish jobs', async () => {
-
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        await worker.publish([{ some: 'data' }, { some: 'data' }]);
-
-        const listener = new Promise(async (resolve) => {
-
-            let count = 0;
-            await worker.subscribe((job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                if (++count === 2) {
-                    resolve();
-                }
-            });
-        });
-
-        await Promise.all([
-            listener,
-            drained
-        ]);
-
-        const res = await db.query('SELECT * from test_jobs');
-        expect(res.rowCount).to.equal(0);
-
-        await worker.end();
-    });
-
-    it('can handle a publish after a subscription', async () => {
-
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        const listener = new Promise(async (resolve) => {
-
-            await worker.subscribe((job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                resolve();
-            });
-        });
-
-        await worker.publish({ some: 'data' });
-
-        await Promise.all([
-            listener,
-            drained
-        ]);
-
-        const res = await db.query('SELECT * from test_jobs');
-        expect(res.rowCount).to.equal(0);
-
-        await worker.end();
-    });
-
-    it('can handle two publishes after a subscription', async () => {
-
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
-
-        let drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        let resolver;
-        let listener = new Promise((resolve) => {
-
-            resolver = resolve;
-        });
-
-        await worker.subscribe((job) => {
-
-            expect(job.args).to.equal({ some: 'data' });
-            resolver();
-            listener = new Promise((resolve) => {
-
-                resolver = resolve;
-            });
-        });
-
-        await worker.publish({ some: 'data' });
-        await listener;
-        await drained;
-
-        drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        await worker.publish({ some: 'data' });
-        await listener;
-        await drained;
-
-        const res = await db.query('SELECT * from test_jobs');
-        expect(res.rowCount).to.equal(0);
-
-        await worker.end();
-    });
-
-    it('can timeout a job', async () => {
-
-        const worker = new Porker({ connection, queue: 'test', timeout: 1 });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            worker.once('drain', resolve);
-        });
-
-        const listener = new Promise(async (resolve) => {
-
-            await worker.subscribe(async (job) => {
-
-                expect(job.args).to.equal({ some: 'data' });
-                await timeout(10);
-                resolve();
-            });
-        });
-
-        await worker.publish({ some: 'data' });
-
-        await Promise.all([
-            listener,
-            drained
-        ]);
-
-        const res = await db.query('SELECT * FROM test_jobs');
-        expect(res.rowCount).to.equal(1);
-        const row = Object.assign({}, res.rows[0]);
-        expect(row).to.contain({ error_count: 1, args: { some: 'data' } });
-
-        await worker.end();
-    });
-
-    it('can create a recurring job', async () => {
-
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            let count = 0;
-            worker.on('drain', () => {
-
-                if (++count === 2) {
-                    resolve();
-                }
-            });
-        });
-
-        const listener = new Promise(async (resolve) => {
-
-            let count = 0;
-            await worker.subscribe((job) => {
-
-                expect(job.args).to.equal({ timer: 'data' });
-                expect(job.repeat_every).to.not.equal(null);
-                if (++count === 2) {
-                    resolve();
-                }
-            });
-        });
-
-        await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
-        await Promise.all([
-            listener,
-            drained
-        ]);
-
-        const res = await db.query('SELECT * FROM test_jobs');
-        expect(res.rowCount).to.equal(1);
-        const row = Object.assign({}, res.rows[0]);
-        expect(row).to.contain({ error_count: 0, args: { timer: 'data' } });
-        expect(row.repeat_every).to.not.equal(null);
-
-        await worker.end();
-    });
-
-    it('can retry a failed recurring job and reset it', async () => {
-
-        const worker = new Porker({ connection, queue: 'test', retryDelay: '10 milliseconds' });
-        await worker.create();
-
-        const drained = new Promise((resolve) => {
-
-            let count = 0;
-            // should fire twice
-            worker.on('drain', () => {
-
-                if (++count === 2) {
-                    resolve();
-                }
-            });
-        });
-
-        const drainedRetries = new Promise((resolve) => {
-
-            // should fire once
-            worker.once('drainRetries', resolve);
-        });
-
-        const listener = new Promise(async (resolve) => {
-
-            let count = 0;
-            // should fire twice
-            await worker.subscribe((job) => {
-
-                expect(job.args).to.equal({ timer: 'data' });
-                expect(job.repeat_every).to.not.equal(null);
-                if (++count === 1) {
-                    throw new Error('Uh oh');
-                }
-
-                if (count === 2) {
-                    return resolve();
-                }
-            });
-        });
-
-        const retrier = new Promise(async (resolve) => {
-
-            // should fire once
-            await worker.retry((job) => {
-
-                expect(job.args).to.equal({ timer: 'data' });
-                expect(job.repeat_every).to.not.equal(null);
-                resolve();
-            });
-        });
-
-        await worker.publish({ timer: 'data' }, { repeat: '100 milliseconds' });
-
-        await Promise.all([
-            listener,
-            drained,
-            retrier,
-            drainedRetries
-        ]);
-
-        const res = await db.query('SELECT * FROM test_jobs');
-        expect(res.rowCount).to.equal(1);
-        const row = Object.assign({}, res.rows[0]);
-        // error_count will be 0 because we fail once setting it to 1, retry setting it back to 0, then run a second time keeping the 0
-        expect(row).to.contain({ error_count: 0, args: { timer: 'data' } });
-        expect(row.repeat_every).to.not.equal(null);
-
-        await worker.end();
-    });
-
-    it('can unpublish a job', async () => {
-
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
-
-        const [job] = await worker.publish({ some: 'data' });
-
-        let res = await db.query('SELECT * FROM test_jobs');
-        expect(res.rowCount).to.equal(1);
-        expect(res.rows[0].id).to.equal(job);
-
-        await worker.unpublish(job);
-        res = await db.query('SELECT * FROM test_jobs');
-        expect(res.rowCount).to.equal(0);
-
-        await worker.end();
-    });
-
-    it('can bulk unpublish jobs', async () => {
-
-        const worker = new Porker({ connection, queue: 'test' });
-        await worker.create();
-
-        const jobs = await worker.publish([{ some: 'data' }, { some: 'data' }]);
-        expect(jobs.length).to.equal(2);
-
-        let res = await db.query('SELECT * FROM test_jobs');
-        expect(res.rowCount).to.equal(2);
-        expect(res.rows[0].id).to.equal(jobs[0]);
-        expect(res.rows[1].id).to.equal(jobs[1]);
-
-        await worker.unpublish(jobs);
-        res = await db.query('SELECT * FROM test_jobs');
-        expect(res.rowCount).to.equal(0);
-
-        await worker.end();
-    });
-
-    it('returns 200 on healthcheck when connected', async () => {
-
-        const worker = new Porker({ connection, queue: 'test', healthcheckPort: 4500 });
-
-        await worker.create();
-        await worker.subscribe(() => {});
-
-        // why this throws even for a 200, i have no idea
-        try {
-            await get(`http://localhost:${worker.healthcheckPort}`);
-            fail('this should not be reachable');
-        }
-        catch (err) {
-            expect(err.statusCode).to.equal(200);
-        }
-
-        await worker.end();
-    });
-
-    it('does not listen for healthchecks by default', async () => {
-
-        const worker = new Porker({ connection, queue: 'test' });
-
-        await worker.create();
-        await worker.subscribe(() => {});
-
-        expect(worker.healthcheckPort).to.equal(null);
-
-        await worker.end();
-    });
+  t.end();
 });

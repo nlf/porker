@@ -4,7 +4,10 @@
   "description": "because it's a worker, but for postgres",
   "main": "lib/index.js",
   "scripts": {
-    "test": "lab -a @hapi/code -t 100 -L"
+    "lint": "eslint .",
+    "postlint": "tsc -p jsconfig.json",
+    "test": "tap",
+    "posttest": "npm run lint"
   },
   "files": [
     "lib"
@@ -28,8 +31,15 @@
     "pg": "^8.12.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.9.1",
     "@hapi/code": "^9.0.3",
     "@hapi/lab": "^25.3.1",
-    "eslint": "^9.9.1"
+    "@stylistic/eslint-plugin": "^2.6.4",
+    "@tsconfig/node20": "^20.1.4",
+    "@types/pg": "^8.11.8",
+    "eslint": "^9.9.1",
+    "globals": "^15.9.0",
+    "tap": "^21.0.1",
+    "typescript": "^5.5.4"
   }
 }
