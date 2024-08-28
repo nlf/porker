@@ -21,10 +21,12 @@ describe('Porker', () => {
     const db = new Pg.Client(connection);
 
     before(async () => {
+
         await db.connect();
     });
 
     after(async () => {
+
         await db.end();
     });
 
