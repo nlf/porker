@@ -3,14 +3,20 @@
   "version": "2.5.0",
   "description": "because it's a worker, but for postgres",
   "main": "lib/index.js",
+  "types": "lib/index.d.ts",
   "scripts": {
+    "build": "npx tsc --build tsconfig.build.json",
+    "clean": "npx tsc --build --clean tsconfig.build.json",
+    "prepublishOnly": "npm run build",
     "lint": "eslint .",
-    "postlint": "tsc -p jsconfig.json",
+    "postlint": "npx tsc",
     "test": "tap",
     "posttest": "npm run lint"
   },
   "files": [
-    "lib"
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "lib/**/*.d.ts.map"
   ],
   "keywords": [
     "postgres",

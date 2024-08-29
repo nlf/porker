@@ -1,4 +1,17 @@
-.DS_Store
-node_modules
-coverage.html
-.tap
+# This file is managed by code-skeleton. Do not make changes.
+# ignore everything in the root
+/*
+
+# keep these
+!**/.gitignore
+!/eslint.config.mjs
+!/.github/
+!/.gitignore
+!/.npmrc
+!/lib/
+!/LICENSE*
+!/package.json
+!/README*
+!/tap-snapshots/
+!/test/
+!/tsconfig*.json

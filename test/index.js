@@ -3,7 +3,7 @@
 const { once } = require("node:events");
 const { setTimeout } = require("node:timers/promises");
 const t = require("tap");
-const Porker = require("../");
+const { Porker } = require("../");
 const { Deferred } = require("../lib/util");
 
 const Pg = require("pg");
@@ -37,22 +37,14 @@ t.test("Porker", (t) => {
 
   t.test("accepts strings for connection settings", (t) => {
     t.doesNotThrow(() => {
-      new Porker({ connection: "postgres://localhost/porker_test_suite", queue: "test" });
+      new Porker({ connection: "postgres://localhost/porker-test" });
     });
 
     t.end();
   });
 
-  t.test("throws when no queue is specified", (t) => {
-    t.throws(() => {
-      new Porker();
-    }, "Missing required parameter: queue");
-
-    t.end();
-  });
-
   t.test("throws when a subscriber is added twice", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -64,7 +56,7 @@ t.test("Porker", (t) => {
   });
 
   t.test("throws when retrier is added twice", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -75,24 +67,15 @@ t.test("Porker", (t) => {
     await t.rejects(worker.retry(async () => {}), "A retry handler has already been added to this queue");
   });
 
-  t.test("does not throw when queues have a dash", async (t) => {
-    const worker = new Porker({ connection, queue: "test-queue" });
-    t.teardown(async () => {
-      await worker.end();
-    });
-
-    await t.resolves(worker.create());
-  });
-
   t.test("can create its own table", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
 
     await worker.create();
 
-    const res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'test_jobs'");
+    const res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'porker_jobs'");
     t.equal(res.rowCount, 7);
 
     const rows = res.rows.reduce((acc, row) => [...acc, row.column_name], []);
@@ -100,38 +83,38 @@ t.test("Porker", (t) => {
   });
 
   t.test("can drop its own table", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
 
     await worker.create();
 
-    let res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'test_jobs'");
+    let res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'porker_jobs'");
     t.equal(res.rowCount, 7);
 
     const rows = res.rows.reduce((acc, row) => [...acc, row.column_name], []);
     t.strictSame(rows, ["id", "priority", "started_at", "repeat_every", "error_count", "args", "retry_at"]);
 
     await worker.drop();
-    res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'test_jobs'");
+    res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'porker_jobs'");
     t.equal(res.rowCount, 0);
   });
 
   t.test("can end without a client connection", async (t) => {
-    let worker = new Porker({ connection, queue: "test" });
+    let worker = new Porker({ connection });
 
     await worker.create();
     await worker.end();
 
-    worker = new Porker({ connection, queue: "test" });
+    worker = new Porker({ connection });
     await worker.subscribe(() => {});
 
     await t.resolves(worker.end());
   });
 
   t.test("can handle a single job", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -156,12 +139,12 @@ t.test("Porker", (t) => {
       drained,
     ]);
 
-    const res = await db.query("SELECT * from test_jobs");
+    const res = await db.query("SELECT * from porker_jobs");
     t.equal(res.rowCount, 0);
   });
 
   t.test("can handle a failing job", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -187,7 +170,7 @@ t.test("Porker", (t) => {
       drained,
     ]);
 
-    const res = await db.query("SELECT * from test_jobs");
+    const res = await db.query("SELECT * from porker_jobs");
     t.equal(res.rowCount, 1);
     t.equal(res.rows[0].id, id);
     t.equal(res.rows[0].error_count, 1);
@@ -195,7 +178,7 @@ t.test("Porker", (t) => {
   });
 
   t.test("can retry a failed job", async (t) => {
-    const worker = new Porker({ connection, queue: "test", retryDelay: "10 milliseconds" });
+    const worker = new Porker({ connection, retryDelay: "10 milliseconds" });
     t.teardown(async () => {
       await worker.end();
     });
@@ -235,12 +218,12 @@ t.test("Porker", (t) => {
       drainedRetries,
     ]);
 
-    const res = await db.query("SELECT * from test_jobs");
+    const res = await db.query("SELECT * from porker_jobs");
     t.equal(res.rowCount, 0);
   });
 
   t.test("can retry a failed job with a delay", async (t) => {
-    const worker = new Porker({ connection, queue: "test", retryDelay: "150 milliseconds" });
+    const worker = new Porker({ connection, retryDelay: "150 milliseconds" });
     t.teardown(async () => {
       await worker.end();
     });
@@ -280,12 +263,12 @@ t.test("Porker", (t) => {
       drainedRetries,
     ]);
 
-    const res = await db.query("SELECT * from test_jobs");
+    const res = await db.query("SELECT * from porker_jobs");
     t.equal(res.rowCount, 0);
   });
 
   t.test("can handle two jobs", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -314,12 +297,12 @@ t.test("Porker", (t) => {
       drained,
     ]);
 
-    const res = await db.query("SELECT * from test_jobs");
+    const res = await db.query("SELECT * from porker_jobs");
     t.equal(res.rowCount, 0);
   });
 
   t.test("can retry two failed jobs", async (t) => {
-    const worker = new Porker({ connection, queue: "test", retryDelay: "1 millisecond" });
+    const worker = new Porker({ connection, retryDelay: "1 millisecond" });
     t.teardown(async () => {
       await worker.end();
     });
@@ -367,12 +350,12 @@ t.test("Porker", (t) => {
       drainedRetries,
     ]);
 
-    const res = await db.query("SELECT * from test_jobs");
+    const res = await db.query("SELECT * from porker_jobs");
     t.equal(res.rowCount, 0);
   });
 
   t.test("can bulk publish jobs", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -400,12 +383,12 @@ t.test("Porker", (t) => {
       drained,
     ]);
 
-    const res = await db.query("SELECT * from test_jobs");
+    const res = await db.query("SELECT * from porker_jobs");
     t.equal(res.rowCount, 0);
   });
 
   t.test("can handle a publish after a subscription", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -430,12 +413,12 @@ t.test("Porker", (t) => {
       drained,
     ]);
 
-    const res = await db.query("SELECT * from test_jobs");
+    const res = await db.query("SELECT * from porker_jobs");
     t.equal(res.rowCount, 0);
   });
 
   t.test("can handle two publishes after a subscription", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -461,12 +444,12 @@ t.test("Porker", (t) => {
     await eventTwo.promise;
     await once(worker, "drain");
 
-    const res = await db.query("SELECT * from test_jobs");
+    const res = await db.query("SELECT * from porker_jobs");
     t.equal(res.rowCount, 0);
   });
 
   t.test("can timeout a job", async (t) => {
-    const worker = new Porker({ connection, queue: "test", timeout: 1 });
+    const worker = new Porker({ connection, timeout: 1 });
     t.teardown(async () => {
       await worker.end();
     });
@@ -492,14 +475,14 @@ t.test("Porker", (t) => {
       drained,
     ]);
 
-    const res = await db.query("SELECT * FROM test_jobs");
+    const res = await db.query("SELECT * FROM porker_jobs");
     t.equal(res.rowCount, 1);
     const row = Object.assign({}, res.rows[0]);
     t.hasStrict(row, { error_count: 1, args: { some: "data" } });
   });
 
   t.test("can create a recurring job", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -532,7 +515,7 @@ t.test("Porker", (t) => {
       drained,
     ]);
 
-    const res = await db.query("SELECT * FROM test_jobs");
+    const res = await db.query("SELECT * FROM porker_jobs");
     t.equal(res.rowCount, 1);
     const row = Object.assign({}, res.rows[0]);
     t.hasStrict(row, { error_count: 0, args: { timer: "data" } });
@@ -540,7 +523,7 @@ t.test("Porker", (t) => {
   });
 
   t.test("can retry a failed recurring job and reset it", async (t) => {
-    const worker = new Porker({ connection, queue: "test", retryDelay: "10 milliseconds" });
+    const worker = new Porker({ connection, retryDelay: "10 milliseconds" });
     t.teardown(async () => {
       await worker.end();
     });
@@ -596,7 +579,7 @@ t.test("Porker", (t) => {
       drainedRetries,
     ]);
 
-    const res = await db.query("SELECT * FROM test_jobs");
+    const res = await db.query("SELECT * FROM porker_jobs");
     t.equal(res.rowCount, 1);
     const row = Object.assign({}, res.rows[0]);
     // error_count will be 0 because we fail once setting it to 1, retry setting it back to 0, then run a second time keeping the 0
@@ -605,7 +588,7 @@ t.test("Porker", (t) => {
   });
 
   t.test("can unpublish a job", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -614,17 +597,17 @@ t.test("Porker", (t) => {
 
     const [job] = await worker.publish({ some: "data" });
 
-    let res = await db.query("SELECT * FROM test_jobs");
+    let res = await db.query("SELECT * FROM porker_jobs");
     t.equal(res.rowCount, 1);
     t.equal(res.rows[0].id, job);
 
     await worker.unpublish(job);
-    res = await db.query("SELECT * FROM test_jobs");
+    res = await db.query("SELECT * FROM porker_jobs");
     t.equal(res.rowCount, 0);
   });
 
   t.test("can bulk unpublish jobs", async (t) => {
-    const worker = new Porker({ connection, queue: "test" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -634,13 +617,13 @@ t.test("Porker", (t) => {
     const jobs = await worker.publish([{ some: "data" }, { some: "data" }]);
     t.equal(jobs.length, 2);
 
-    let res = await db.query("SELECT * FROM test_jobs");
+    let res = await db.query("SELECT * FROM porker_jobs");
     t.equal(res.rowCount, 2);
     t.equal(res.rows[0].id, jobs[0]);
     t.equal(res.rows[1].id, jobs[1]);
 
     await worker.unpublish(jobs);
-    res = await db.query("SELECT * FROM test_jobs");
+    res = await db.query("SELECT * FROM porker_jobs");
     t.equal(res.rowCount, 0);
   });
 
