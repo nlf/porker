@@ -52,7 +52,7 @@ t.test("Porker", (t) => {
     await worker.create();
 
     await worker.subscribe(async () => {});
-    await t.rejects(worker.subscribe(async () => {}), "A subscriber has already been added to this queue");
+    await t.rejects(worker.subscribe(async () => {}), "A subscriber has already been added to this queuasdfasdfgadfge");
   });
 
   t.test("throws when retrier is added twice", async (t) => {
@@ -189,10 +189,6 @@ t.test("Porker", (t) => {
       worker.once("drain", resolve);
     });
 
-    const drainedRetries = new Promise((resolve) => {
-      worker.once("drainRetries", resolve);
-    });
-
     const listener = new Deferred();
 
     await worker.subscribe((job) => {
@@ -215,7 +211,51 @@ t.test("Porker", (t) => {
       listener.promise,
       retrier.promise,
       drained,
-      drainedRetries,
+    ]);
+
+    const res = await db.query("SELECT * from porker_jobs");
+    t.equal(res.rowCount, 0);
+  });
+
+  t.test("can retry a failed job when a worker is only a retrier", async (t) => {
+    const worker = new Porker({ connection, retryDelay: "10 milliseconds" });
+    const retryWorker = new Porker({ connection, retryDelay: "10 milliseconds" });
+    t.teardown(async () => {
+      await worker.end();
+      await retryWorker.end();
+    });
+
+    await worker.create();
+
+    const drained = new Promise((resolve) => {
+      worker.once("drain", resolve);
+    });
+
+    const listener = new Deferred();
+
+    await worker.subscribe((job) => {
+      t.strictSame(job.args, { some: "data" });
+      listener.resolve(true);
+      throw new Error("Uh oh");
+    });
+
+    const retrier = new Deferred();
+
+    const retryDrained = once(retryWorker, "drain");
+
+    await retryWorker.retry((job) => {
+      t.strictSame(job.args, { some: "data" });
+      t.equal(job.error_count, 1);
+      retrier.resolve(true);
+    });
+
+    await worker.publish({ some: "data" });
+
+    await Promise.all([
+      listener.promise,
+      retrier.promise,
+      drained,
+      retryDrained,
     ]);
 
     const res = await db.query("SELECT * from porker_jobs");
@@ -234,10 +274,6 @@ t.test("Porker", (t) => {
       worker.once("drain", resolve);
     });
 
-    const drainedRetries = new Promise((resolve) => {
-      worker.once("drainRetries", resolve);
-    });
-
     const listener = new Deferred();
 
     await worker.subscribe((job) => {
@@ -260,7 +296,6 @@ t.test("Porker", (t) => {
       listener.promise,
       retrier.promise,
       drained,
-      drainedRetries,
     ]);
 
     const res = await db.query("SELECT * from porker_jobs");
@@ -313,10 +348,6 @@ t.test("Porker", (t) => {
       worker.once("drain", resolve);
     });
 
-    const drainedRetries = new Promise((resolve) => {
-      worker.once("drainRetries", resolve);
-    });
-
     await worker.publish({ some: "data" });
     await worker.publish({ some: "data" });
 
@@ -347,7 +378,6 @@ t.test("Porker", (t) => {
       listener.promise,
       drained,
       retrier.promise,
-      drainedRetries,
     ]);
 
     const res = await db.query("SELECT * from porker_jobs");
@@ -540,11 +570,6 @@ t.test("Porker", (t) => {
       });
     });
 
-    const drainedRetries = new Promise((resolve) => {
-      // should fire once
-      worker.once("drainRetries", resolve);
-    });
-
     const listener = new Deferred();
 
     let count = 0;
@@ -576,7 +601,6 @@ t.test("Porker", (t) => {
       listener.promise,
       drained,
       retrier.promise,
-      drainedRetries,
     ]);
 
     const res = await db.query("SELECT * FROM porker_jobs");
