@@ -7,7 +7,8 @@
   "scripts": {
     "build": "npx tsc --build tsconfig.build.json",
     "clean": "npx tsc --build --clean tsconfig.build.json",
-    "prepublishOnly": "npm run build",
+    "prepack": "npm run build",
+    "postpack": "npm run clean",
     "lint": "eslint .",
     "postlint": "npx tsc",
     "test": "tap",

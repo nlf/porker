@@ -4,10 +4,11 @@
 
 # keep these
 !**/.gitignore
-!/eslint.config.mjs
 !/.github/
-!/.gitignore
 !/.npmrc
+!/bin/
+!/docker-compose.yml
+!/eslint.config.mjs
 !/lib/
 !/LICENSE*
 !/package.json
