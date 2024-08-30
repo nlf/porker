@@ -51,8 +51,8 @@ t.test("Porker", (t) => {
 
     await worker.create();
 
-    await worker.subscribe(async () => {});
-    await t.rejects(worker.subscribe(async () => {}), "A subscriber has already been added to this queuasdfasdfgadfge");
+    await worker.subscribe("event", async () => {});
+    await t.rejects(worker.subscribe("event", async () => {}), /A subscriber for this event has already been added to this queue/);
   });
 
   t.test("throws when retrier is added twice", async (t) => {
@@ -63,8 +63,8 @@ t.test("Porker", (t) => {
 
     await worker.create();
 
-    await worker.retry(async () => {});
-    await t.rejects(worker.retry(async () => {}), "A retry handler has already been added to this queue");
+    await worker.retry("event", async () => {});
+    await t.rejects(worker.retry("event", async () => {}), /A retry handler for this event has already been added to this queue/);
   });
 
   t.test("can create its own table", async (t) => {
@@ -76,10 +76,10 @@ t.test("Porker", (t) => {
     await worker.create();
 
     const res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'porker_jobs'");
-    t.equal(res.rowCount, 7);
+    t.equal(res.rowCount, 8);
 
     const rows = res.rows.reduce((acc, row) => [...acc, row.column_name], []);
-    t.strictSame(rows, ["id", "priority", "started_at", "repeat_every", "error_count", "args", "retry_at"]);
+    t.strictSame(rows, ["id", "priority", "started_at", "repeat_every", "error_count", "args", "retry_at", "event"]);
   });
 
   t.test("can drop its own table", async (t) => {
@@ -91,10 +91,10 @@ t.test("Porker", (t) => {
     await worker.create();
 
     let res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'porker_jobs'");
-    t.equal(res.rowCount, 7);
+    t.equal(res.rowCount, 8);
 
     const rows = res.rows.reduce((acc, row) => [...acc, row.column_name], []);
-    t.strictSame(rows, ["id", "priority", "started_at", "repeat_every", "error_count", "args", "retry_at"]);
+    t.strictSame(rows, ["id", "priority", "started_at", "repeat_every", "error_count", "args", "retry_at", "event"]);
 
     await worker.drop();
     res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'porker_jobs'");
@@ -108,7 +108,7 @@ t.test("Porker", (t) => {
     await worker.end();
 
     worker = new Porker({ connection });
-    await worker.subscribe(() => {});
+    await worker.subscribe("event", () => {});
 
     await t.resolves(worker.end());
   });
@@ -125,11 +125,11 @@ t.test("Porker", (t) => {
       worker.once("drain", resolve);
     });
 
-    await worker.publish({ some: "data" });
+    await worker.publish("event", { some: "data" });
 
     const listener = new Deferred();
 
-    await worker.subscribe((job) => {
+    await worker.subscribe("event", (job) => {
       t.strictSame(job.args, { some: "data" });
       listener.resolve(true);
     });
@@ -155,11 +155,11 @@ t.test("Porker", (t) => {
       worker.once("drain", resolve);
     });
 
-    const [id] = await worker.publish({ some: "data" });
+    const [id] = await worker.publish("myevent", { some: "data" });
 
     const listener = new Deferred();
 
-    await worker.subscribe((job) => {
+    await worker.subscribe("myevent", (job) => {
       t.strictSame(job.args, { some: "data" });
       listener.resolve(true);
       throw new Error("Uh oh");
@@ -191,7 +191,7 @@ t.test("Porker", (t) => {
 
     const listener = new Deferred();
 
-    await worker.subscribe((job) => {
+    await worker.subscribe("retry_failed", (job) => {
       t.strictSame(job.args, { some: "data" });
       listener.resolve(true);
       throw new Error("Uh oh");
@@ -199,13 +199,13 @@ t.test("Porker", (t) => {
 
     const retrier = new Deferred();
 
-    await worker.retry((job) => {
+    await worker.retry("retry_failed", (job) => {
       t.strictSame(job.args, { some: "data" });
       t.equal(job.error_count, 1);
       retrier.resolve(true);
     });
 
-    await worker.publish({ some: "data" });
+    await worker.publish("retry_failed", { some: "data" });
 
     await Promise.all([
       listener.promise,
@@ -233,7 +233,7 @@ t.test("Porker", (t) => {
 
     const listener = new Deferred();
 
-    await worker.subscribe((job) => {
+    await worker.subscribe("retrier", (job) => {
       t.strictSame(job.args, { some: "data" });
       listener.resolve(true);
       throw new Error("Uh oh");
@@ -243,13 +243,13 @@ t.test("Porker", (t) => {
 
     const retryDrained = once(retryWorker, "drain");
 
-    await retryWorker.retry((job) => {
+    await retryWorker.retry("retrier", (job) => {
       t.strictSame(job.args, { some: "data" });
       t.equal(job.error_count, 1);
       retrier.resolve(true);
     });
 
-    await worker.publish({ some: "data" });
+    await worker.publish("retrier", { some: "data" });
 
     await Promise.all([
       listener.promise,
@@ -276,7 +276,7 @@ t.test("Porker", (t) => {
 
     const listener = new Deferred();
 
-    await worker.subscribe((job) => {
+    await worker.subscribe("delay", (job) => {
       t.strictSame(job.args, { some: "data" });
       listener.resolve(true);
       throw new Error("Uh oh");
@@ -284,13 +284,13 @@ t.test("Porker", (t) => {
 
     const retrier = new Deferred();
 
-    await worker.retry((job) => {
+    await worker.retry("delay", (job) => {
       t.strictSame(job.args, { some: "data" });
       t.equal(job.error_count, 1);
       retrier.resolve(true);
     });
 
-    await worker.publish({ some: "data" });
+    await worker.publish("delay", { some: "data" });
 
     await Promise.all([
       listener.promise,
@@ -314,13 +314,13 @@ t.test("Porker", (t) => {
       worker.once("drain", resolve);
     });
 
-    await worker.publish({ some: "data" });
-    await worker.publish({ some: "data" });
+    await worker.publish("event", { some: "data" });
+    await worker.publish("event", { some: "data" });
 
     const listener = new Deferred();
 
     let count = 0;
-    await worker.subscribe((job) => {
+    await worker.subscribe("event", (job) => {
       t.strictSame(job.args, { some: "data" });
       if (++count === 2) {
         listener.resolve(true);
@@ -348,13 +348,13 @@ t.test("Porker", (t) => {
       worker.once("drain", resolve);
     });
 
-    await worker.publish({ some: "data" });
-    await worker.publish({ some: "data" });
+    await worker.publish("fail", { some: "data" });
+    await worker.publish("fail", { some: "data" });
 
     const listener = new Deferred();
 
     let listenerCount = 0;
-    await worker.subscribe((job) => {
+    await worker.subscribe("fail", (job) => {
       t.strictSame(job.args, { some: "data" });
       if (++listenerCount === 2) {
         listener.resolve(true);
@@ -366,7 +366,7 @@ t.test("Porker", (t) => {
     const retrier = new Deferred();
 
     let retrierCount = 0;
-    await worker.retry((job) => {
+    await worker.retry("fail", (job) => {
       t.strictSame(job.args, { some: "data" });
       t.equal(job.error_count, 1);
       if (++retrierCount === 2) {
@@ -396,12 +396,12 @@ t.test("Porker", (t) => {
       worker.once("drain", resolve);
     });
 
-    await worker.publish([{ some: "data" }, { some: "data" }]);
+    await worker.publish("batch", [{ some: "data" }, { some: "data" }]);
 
     const listener = new Deferred();
 
     let count = 0;
-    await worker.subscribe((job) => {
+    await worker.subscribe("batch", (job) => {
       t.strictSame(job.args, { some: "data" });
       if (++count === 2) {
         listener.resolve(true);
@@ -431,12 +431,12 @@ t.test("Porker", (t) => {
 
     const listener = new Deferred();
 
-    await worker.subscribe((job) => {
+    await worker.subscribe("event", (job) => {
       t.strictSame(job.args, { some: "data" });
       listener.resolve(true);
     });
 
-    await worker.publish({ some: "data" });
+    await worker.publish("event", { some: "data" });
 
     await Promise.all([
       listener.promise,
@@ -458,7 +458,7 @@ t.test("Porker", (t) => {
     const eventTwo = new Deferred();
     const events = [eventOne, eventTwo];
 
-    await worker.subscribe((job) => {
+    await worker.subscribe("event", (job) => {
       t.strictSame(job.args, { some: "data" });
       if (events.length) {
         const event = /** @type {Deferred} */ (events.shift());
@@ -466,11 +466,11 @@ t.test("Porker", (t) => {
       }
     });
 
-    await worker.publish({ some: "data" });
+    await worker.publish("event", { some: "data" });
     await eventOne.promise;
     await once(worker, "drain");
 
-    await worker.publish({ some: "data" });
+    await worker.publish("event", { some: "data" });
     await eventTwo.promise;
     await once(worker, "drain");
 
@@ -492,13 +492,13 @@ t.test("Porker", (t) => {
 
     const listener = new Deferred();
 
-    await worker.subscribe(async (job) => {
+    await worker.subscribe("timeout", async (job) => {
       t.strictSame(job.args, { some: "data" });
       await setTimeout(10);
       listener.resolve(true);
     });
 
-    await worker.publish({ some: "data" });
+    await worker.publish("timeout", { some: "data" });
 
     await Promise.all([
       listener.promise,
@@ -531,7 +531,7 @@ t.test("Porker", (t) => {
     const listener = new Deferred();
 
     let count = 0;
-    await worker.subscribe((job) => {
+    await worker.subscribe("recurring", (job) => {
       t.strictSame(job.args, { timer: "data" });
       t.not(job.repeat_every, null);
       if (++count === 2) {
@@ -539,7 +539,7 @@ t.test("Porker", (t) => {
       }
     });
 
-    await worker.publish({ timer: "data" }, { repeat: "100 milliseconds" });
+    await worker.publish("recurring", { timer: "data" }, { repeat: "100 milliseconds" });
     await Promise.all([
       listener.promise,
       drained,
@@ -574,7 +574,7 @@ t.test("Porker", (t) => {
 
     let count = 0;
     // should fire twice
-    await worker.subscribe((job) => {
+    await worker.subscribe("fail", (job) => {
       t.strictSame(job.args, { timer: "data" });
       t.not(job.repeat_every, null);
       if (++count === 1) {
@@ -589,13 +589,13 @@ t.test("Porker", (t) => {
     const retrier = new Deferred();
 
     // should fire once
-    await worker.retry((job) => {
+    await worker.retry("fail", (job) => {
       t.strictSame(job.args, { timer: "data" });
       t.not(job.repeat_every, null);
       retrier.resolve(true);
     });
 
-    await worker.publish({ timer: "data" }, { repeat: "100 milliseconds" });
+    await worker.publish("fail", { timer: "data" }, { repeat: "100 milliseconds" });
 
     await Promise.all([
       listener.promise,
@@ -619,7 +619,7 @@ t.test("Porker", (t) => {
 
     await worker.create();
 
-    const [job] = await worker.publish({ some: "data" });
+    const [job] = await worker.publish("nope", { some: "data" });
 
     let res = await db.query("SELECT * FROM porker_jobs");
     t.equal(res.rowCount, 1);
@@ -638,7 +638,7 @@ t.test("Porker", (t) => {
 
     await worker.create();
 
-    const jobs = await worker.publish([{ some: "data" }, { some: "data" }]);
+    const jobs = await worker.publish("nope", [{ some: "data" }, { some: "data" }]);
     t.equal(jobs.length, 2);
 
     let res = await db.query("SELECT * FROM porker_jobs");
