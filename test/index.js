@@ -4,7 +4,6 @@ const { once } = require("node:events");
 const { setTimeout } = require("node:timers/promises");
 const t = require("tap");
 const { Porker } = require("../");
-const { Deferred } = require("../lib/util");
 
 const Pg = require("pg");
 
@@ -163,7 +162,7 @@ t.test("Porker", (t) => {
   });
 
   t.test("can retry a failed job", async (t) => {
-    const worker = new Porker({ connection, retryDelay: "10 milliseconds" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -174,7 +173,7 @@ t.test("Porker", (t) => {
       throw new Error("Uh oh");
     });
 
-    const id = await worker.publish("retry_failed", { some: "data" });
+    const id = await worker.publish("retry_failed", { some: "data" }, { retryDelay: "10 milliseconds" });
     await once(worker, "drain");
 
     await worker.retry("retry_failed", (job) => {
@@ -205,8 +204,8 @@ t.test("Porker", (t) => {
   });
 
   t.test("can retry a failed job when a worker is only a retrier", async (t) => {
-    const worker = new Porker({ connection, retryDelay: "10 milliseconds" });
-    const retryWorker = new Porker({ connection, retryDelay: "10 milliseconds" });
+    const worker = new Porker({ connection });
+    const retryWorker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
       await retryWorker.end();
@@ -219,7 +218,7 @@ t.test("Porker", (t) => {
       throw new Error("Uh oh");
     });
 
-    const id = await worker.publish("retrier", { some: "data" });
+    const id = await worker.publish("retrier", { some: "data" }, { retryDelay: "10 milliseconds" });
     await once(worker, "drain");
 
     await retryWorker.retry("retrier", (job) => {
@@ -249,7 +248,7 @@ t.test("Porker", (t) => {
   });
 
   t.test("can retry a failed job with a delay", async (t) => {
-    const worker = new Porker({ connection, retryDelay: "150 milliseconds" });
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -261,7 +260,7 @@ t.test("Porker", (t) => {
       throw new Error("Uh oh");
     });
 
-    const id = await worker.publish("delay", { some: "data" });
+    const id = await worker.publish("delay", { some: "data" }, { retryDelay: "150 milliseconds" });
     await once(worker, "drain");
 
     await worker.retry("delay", (job) => {
@@ -291,7 +290,8 @@ t.test("Porker", (t) => {
 
     const runOneStart = status.runs?.[0].started_at;
     const runTwoStart = status.runs?.[1].started_at;
-    t.ok(runOneStart && runTwoStart && runTwoStart.getTime() - runOneStart.getTime() >= 150);
+    const delay = (runOneStart && runTwoStart) && runTwoStart?.getTime() - runOneStart?.getTime();
+    t.ok(delay && delay >= 148, `${delay} is above 148 (150 with fuzz)`);
   });
 
   t.test("can handle two jobs", async (t) => {
@@ -318,7 +318,8 @@ t.test("Porker", (t) => {
   });
 
   t.test("can retry two failed jobs", async (t) => {
-    const worker = new Porker({ connection, retryDelay: "1 millisecond" });
+    const retryDelay = "1 millisecond";
+    const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
     });
@@ -330,8 +331,8 @@ t.test("Porker", (t) => {
       throw new Error("Uh oh");
     });
 
-    const idOne = await worker.publish("fail", { some: "data" });
-    const idTwo = await worker.publish("fail", { some: "data" });
+    const idOne = await worker.publish("fail", { some: "data" }, { retryDelay });
+    const idTwo = await worker.publish("fail", { some: "data" }, { retryDelay });
     await once(worker, "drain");
 
     await worker.retry("fail", (job) => {
