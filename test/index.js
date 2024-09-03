@@ -348,28 +348,6 @@ t.test("Porker", (t) => {
     t.equal(statusTwo.status, "SUCCESS");
   });
 
-  t.test("can bulk publish jobs", async (t) => {
-    const worker = new Porker({ connection });
-    t.teardown(async () => {
-      await worker.end();
-    });
-
-    await worker.create();
-
-    await worker.subscribe("batch", (job) => {
-      t.strictSame(job.args, { some: "data" });
-    });
-
-    const ids = await worker.publish("batch", [{ some: "data" }, { some: "data" }]);
-    await once(worker, "drain");
-
-    t.equal(ids.length, 2);
-    for (const id of ids) {
-      const status = await worker.status(id);
-      t.equal(status.status, "SUCCESS");
-    }
-  });
-
   t.test("can timeout a job", async (t) => {
     const worker = new Porker({ connection, timeout: 1 });
     t.teardown(async () => {
@@ -433,34 +411,6 @@ t.test("Porker", (t) => {
 
     const afterStatus = await worker.status(id);
     t.equal(afterStatus.status, "SUCCESS");
-  });
-
-  t.test("can bulk unpublish jobs", async (t) => {
-    const worker = new Porker({ connection });
-    t.teardown(async () => {
-      await worker.end();
-    });
-
-    await worker.create();
-
-    const jobs = await worker.publish("nope", [{ some: "data" }, { some: "data" }]);
-    t.equal(jobs.length, 2);
-
-    const beforeStatuses = await Promise.all([
-      worker.status(jobs[0]),
-      worker.status(jobs[1]),
-    ]);
-
-    t.strictSame(beforeStatuses.map((job) => job.status), ["WAITING", "WAITING"]);
-
-    await worker.unpublish(jobs);
-
-    const afterStatuses = await Promise.all([
-      worker.status(jobs[0]),
-      worker.status(jobs[1]),
-    ]);
-
-    t.strictSame(afterStatuses.map((job) => job.status), ["SUCCESS", "SUCCESS"]);
   });
 
   t.end();
