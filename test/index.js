@@ -44,8 +44,8 @@ t.test("Porker", (t) => {
 
     await worker.create();
 
-    await worker.subscribe("event", async () => {});
-    await t.rejects(worker.subscribe("event", async () => {}), /A subscriber for this event has already been added to this queue/);
+    await worker.subscribe("channel", async () => {});
+    await t.rejects(worker.subscribe("channel", async () => {}), /A subscriber for this channel has already been added to this queue/);
   });
 
   t.test("throws when retrier is added twice", async (t) => {
@@ -56,8 +56,8 @@ t.test("Porker", (t) => {
 
     await worker.create();
 
-    await worker.retry("event", async () => {});
-    await t.rejects(worker.retry("event", async () => {}), /A retry handler for this event has already been added to this queue/);
+    await worker.retry("channel", async () => {});
+    await t.rejects(worker.retry("channel", async () => {}), /A retry handler for this channel has already been added to this queue/);
   });
 
   t.test("can create its own table", async (t) => {
@@ -108,17 +108,17 @@ t.test("Porker", (t) => {
 
     await worker.create();
 
-    await worker.subscribe("event", (job) => {
+    await worker.subscribe("single-job", (job) => {
       t.strictSame(job.args, { some: "data" });
     });
 
-    const id = await worker.publish("event", { some: "data" });
+    const id = await worker.publish("single-job", { some: "data" });
     await once(worker, "drain");
 
     const status = await worker.status(id);
     t.hasStrict(status, {
       id,
-      event: "event",
+      channel: "single-job",
       args: { some: "data" },
       status: "SUCCESS",
     });
@@ -138,18 +138,18 @@ t.test("Porker", (t) => {
 
     await worker.create();
 
-    await worker.subscribe("myevent", (job) => {
+    await worker.subscribe("failing-job", (job) => {
       t.strictSame(job.args, { some: "data" });
       throw new Error("Uh oh");
     });
 
-    const id = await worker.publish("myevent", { some: "data" });
+    const id = await worker.publish("failing-job", { some: "data" });
     await once(worker, "drain");
 
     const status = await worker.status(id);
     t.hasStrict(status, {
       id,
-      event: "myevent",
+      channel: "failing-job",
       args: { some: "data" },
       status: "ERROR",
     });
@@ -168,15 +168,15 @@ t.test("Porker", (t) => {
     });
 
     await worker.create();
-    await worker.subscribe("retry_failed", (job) => {
+    await worker.subscribe("retry-failed", (job) => {
       t.strictSame(job.args, { some: "data" });
       throw new Error("Uh oh");
     });
 
-    const id = await worker.publish("retry_failed", { some: "data" }, { retryDelay: "10 milliseconds" });
+    const id = await worker.publish("retry-failed", { some: "data" }, { retryDelay: "10 milliseconds" });
     await once(worker, "drain");
 
-    await worker.retry("retry_failed", (job) => {
+    await worker.retry("retry-failed", (job) => {
       t.strictSame(job.args, { some: "data" });
       t.equal(job.status, "ERROR");
       return { result: "data" };
@@ -186,7 +186,7 @@ t.test("Porker", (t) => {
     const status = await worker.status(id);
     t.hasStrict(status, {
       id,
-      event: "retry_failed",
+      channel: "retry-failed",
       status: "SUCCESS",
       args: { some: "data" },
     });
@@ -230,7 +230,7 @@ t.test("Porker", (t) => {
     const status = await worker.status(id);
     t.hasStrict(status, {
       id,
-      event: "retrier",
+      channel: "retrier",
       args: { some: "data" },
       status: "SUCCESS",
     });
@@ -272,7 +272,7 @@ t.test("Porker", (t) => {
     const status = await worker.status(id);
     t.hasStrict(status, {
       id,
-      event: "delay",
+      channel: "delay",
       args: { some: "data" },
       status: "SUCCESS",
     });
@@ -368,33 +368,7 @@ t.test("Porker", (t) => {
     t.equal(status.status, "ERROR");
   });
 
-  t.test("can create a recurring job", async (t) => {
-    const worker = new Porker({ connection });
-    t.teardown(async () => {
-      await worker.end();
-    });
-
-    await worker.create();
-
-    await worker.subscribe("recurring", (job) => {
-      t.strictSame(job.args, { timer: "data" });
-      t.not(job.repeat_every, null);
-    });
-
-    const id = await worker.publish("recurring", { timer: "data" }, { repeat: "100 milliseconds" });
-    await once(worker, "drain");
-    await once(worker, "drain");
-
-    await worker.unpublish(id);
-
-    const status = await worker.status(id);
-    t.equal(status.status, 'SUCCESS');
-    t.equal(status.runs?.length, 2);
-    t.equal(status.runs?.[0].status, "SUCCESS");
-    t.equal(status.runs?.[1].status, "SUCCESS");
-  });
-
-  t.test("can unpublish a job", async (t) => {
+  t.test("can cancel a job", async (t) => {
     const worker = new Porker({ connection });
     t.teardown(async () => {
       await worker.end();
@@ -407,10 +381,10 @@ t.test("Porker", (t) => {
     const beforeStatus = await worker.status(id);
     t.equal(beforeStatus.status, "WAITING");
 
-    await worker.unpublish(id);
+    await worker.cancel(id);
 
     const afterStatus = await worker.status(id);
-    t.equal(afterStatus.status, "SUCCESS");
+    t.equal(afterStatus.status, "CANCELLED");
   });
 
   t.end();

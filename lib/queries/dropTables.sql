@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS "porker_runs" CASCADE;
+DROP TABLE IF EXISTS "porker_jobs" CASCADE;
