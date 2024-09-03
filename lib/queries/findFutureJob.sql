@@ -14,7 +14,7 @@ FROM
     "porker_jobs"
 WHERE
     status = ANY ('{"WAITING", "ERROR"}')
-    AND start_after >= NOW()
+    AND start_after > NOW()
     AND CASE
         WHEN status = 'WAITING' THEN
             channel = ANY ($1::text[])
