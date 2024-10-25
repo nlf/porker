@@ -1,18 +1,18 @@
 WITH run_aggs AS (
     SELECT
-        job_id, to_json(porker_runs.*) AS run
+        job_id, to_json(__RUNS_TABLE__.*) AS run
     FROM
-        "porker_runs"
+        __RUNS_TABLE__
     WHERE
         job_id = $1::uuid
 )
 SELECT
-    porker_jobs.*, json_agg(run_aggs.run) AS runs
+    __JOBS_TABLE__.*, json_agg(run_aggs.run) AS runs
 FROM
-    "porker_jobs"
+    __JOBS_TABLE__
 LEFT JOIN
-    "run_aggs" ON porker_jobs.id = run_aggs.job_id
+    "run_aggs" ON __JOBS_TABLE__.id = run_aggs.job_id
 WHERE
-    porker_jobs.id = $1::uuid
+    __JOBS_TABLE__.id = $1::uuid
 GROUP BY
-    porker_jobs.id;
+    __JOBS_TABLE__.id;

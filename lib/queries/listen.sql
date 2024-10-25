@@ -1,1 +1,1 @@
-LISTEN "porker_jobs_publish";
+LISTEN __JOBS_TABLE__;

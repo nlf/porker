@@ -1,1 +1,1 @@
-NOTIFY "porker_jobs_publish";
+NOTIFY __JOBS_TABLE__;

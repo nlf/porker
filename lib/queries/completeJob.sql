@@ -1,4 +1,4 @@
-UPDATE "porker_jobs"
+UPDATE __JOBS_TABLE__
     SET status = 'SUCCESS',
-        updated_at = NOW()
+        updated_at = statement_timestamp()
     WHERE id = $1::uuid;

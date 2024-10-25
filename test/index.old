@@ -130,6 +130,70 @@ t.test("Porker", (t) => {
     });
   });
 
+  t.test("can wait for a job to complete", async (t) => {
+    const worker = new Porker({ connection });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    await worker.subscribe("single-job", (job) => {
+      t.strictSame(job.args, { some: "data" });
+    });
+
+    const id = await worker.publish("single-job", { some: "data" });
+    const status = await worker.wait(id);
+
+    t.hasStrict(status, {
+      id,
+      channel: "single-job",
+      args: { some: "data" },
+      status: "SUCCESS",
+    });
+    t.equal(status.runs?.length, 1);
+    t.hasStrict(status.runs?.[0], {
+      job_id: id,
+      status: "SUCCESS",
+      result: null,
+    });
+  });
+
+  t.test("waiting for a finished job resolves correctly", async (t) => {
+    const worker = new Porker({ connection });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    await worker.subscribe("single-job", (job) => {
+      t.strictSame(job.args, { some: "data" });
+    });
+
+    const id = await worker.publish("single-job", { some: "data" });
+    // wait for the drain so we know the job is already done
+    await once(worker, "drain");
+
+    const status = await worker.wait(id);
+    t.hasStrict(status, {
+      id,
+      channel: "single-job",
+      args: { some: "data" },
+      status: "SUCCESS",
+    });
+    t.equal(status.runs?.length, 1);
+    t.hasStrict(status.runs?.[0], {
+      job_id: id,
+      status: "SUCCESS",
+      result: null,
+    });
+
+    // for good measure, wait for the same job again
+    const evenLaterStatus = await worker.wait(id);
+    t.strictSame(status, evenLaterStatus);
+  });
+
   t.test("can handle a failing job", async (t) => {
     const worker = new Porker({ connection });
     t.teardown(async () => {
@@ -159,6 +223,69 @@ t.test("Porker", (t) => {
       status: "ERROR",
       result: { error: { message: "Uh oh" } },
     });
+  });
+
+  t.test("can wait for a failing job", async (t) => {
+    const worker = new Porker({ connection });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    await worker.subscribe("failing-job", (job) => {
+      t.strictSame(job.args, { some: "data" });
+      throw new Error("Uh oh");
+    });
+
+    const id = await worker.publish("failing-job", { some: "data" });
+    const status = await worker.wait(id);
+    t.hasStrict(status, {
+      id,
+      channel: "failing-job",
+      args: { some: "data" },
+      status: "ERROR",
+    });
+    t.equal(status.runs?.length, 1);
+    t.hasStrict(status.runs?.[0], {
+      job_id: id,
+      status: "ERROR",
+      result: { error: { message: "Uh oh" } },
+    });
+  });
+
+  t.test("can wait for a failing job after its completion", async (t) => {
+    const worker = new Porker({ connection });
+    t.teardown(async () => {
+      await worker.end();
+    });
+
+    await worker.create();
+
+    await worker.subscribe("failing-job", (job) => {
+      t.strictSame(job.args, { some: "data" });
+      throw new Error("Uh oh");
+    });
+
+    const id = await worker.publish("failing-job", { some: "data" });
+    await once(worker, "drain");
+    
+    const status = await worker.wait(id);
+    t.hasStrict(status, {
+      id,
+      channel: "failing-job",
+      args: { some: "data" },
+      status: "ERROR",
+    });
+    t.equal(status.runs?.length, 1);
+    t.hasStrict(status.runs?.[0], {
+      job_id: id,
+      status: "ERROR",
+      result: { error: { message: "Uh oh" } },
+    });
+
+    const evenLaterStatus = await worker.wait(id);
+    t.strictSame(status, evenLaterStatus);
   });
 
   t.test("can retry a failed job", async (t) => {

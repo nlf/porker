@@ -2,34 +2,34 @@ WITH error_counts AS (
     SELECT
         job_id, count(*)
     FROM
-        "porker_runs"
+        __RUNS_TABLE__
     WHERE
         status = 'ERROR'
     GROUP BY
         job_id
 )
-UPDATE "porker_jobs"
+UPDATE __JOBS_TABLE__
 SET
     status = 'IN_PROGRESS',
     updated_at = NOW()
 FROM
-    "porker_jobs" AS "porker_jobs_previous"
+    __JOBS_TABLE__ AS jobs_old
 WHERE
-    porker_jobs.id = ANY (
+    __JOBS_TABLE__.id = ANY (
         SELECT
             id
         FROM
-            "porker_jobs"
+            __JOBS_TABLE__
         WHERE
-            status = ANY ('{"WAITING", "ERROR"}')
+            status = ANY ('{"WAITING","ERROR"}')
             AND start_after <= NOW()
             AND CASE
                 WHEN status = 'WAITING' THEN
                     channel = ANY ($1::text[])
-                ELSE
+                WHEN status = 'ERROR' THEN
                     channel = ANY ($2::text[])
                     AND max_retries >= (SELECT count FROM error_counts WHERE job_id = id)
-            END
+                END
         ORDER BY
             priority DESC,
             start_after,
@@ -38,4 +38,5 @@ WHERE
             $3::integer
         FOR UPDATE SKIP LOCKED
     )
-RETURNING porker_jobs.*, porker_jobs_previous.status;
+    AND __JOBS_TABLE__.id = jobs_old.id
+RETURNING __JOBS_TABLE__.*, jobs_old.status AS status;

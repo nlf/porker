@@ -46,5 +46,10 @@
     "globals": "^15.9.0",
     "tap": "^21.0.1",
     "typescript": "^5.5.4"
+  },
+  "tap": {
+    "bail": true,
+    "exclude": ["test/shared/**/*.js"],
+    "timeout": 3
   }
 }

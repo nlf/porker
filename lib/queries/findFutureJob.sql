@@ -2,7 +2,7 @@ WITH error_counts AS (
     SELECT
         job_id, count(*)
     FROM
-        "porker_runs"
+        __RUNS_TABLE__
     WHERE
         status = 'ERROR'
     GROUP BY
@@ -11,7 +11,7 @@ WITH error_counts AS (
 SELECT
     id, start_after
 FROM
-    "porker_jobs"
+    __JOBS_TABLE__
 WHERE
     status = ANY ('{"WAITING", "ERROR"}')
     AND start_after > NOW()
@@ -26,4 +26,5 @@ ORDER BY
     priority DESC,
     start_after,
     created_at
-LIMIT 1;
+LIMIT 1
+FOR SHARE SKIP LOCKED;

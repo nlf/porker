@@ -1,5 +1,5 @@
-WITH error_counts AS (SELECT job_id, count(*) FROM "porker_runs" WHERE status = 'ERROR' AND job_id = $1::uuid GROUP BY job_id)
-UPDATE "porker_jobs"
+WITH error_counts AS (SELECT job_id, count(*) FROM __RUNS_TABLE__ WHERE status = 'ERROR' AND job_id = $1::uuid GROUP BY job_id)
+UPDATE __JOBS_TABLE__
     SET status = 'ERROR',
         updated_at = statement_timestamp(),
         start_after = CASE

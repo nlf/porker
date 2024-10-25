@@ -1,4 +1,4 @@
-INSERT INTO "porker_jobs"
-    (channel, priority, repeat_every, max_retries, retry_delay, args)
-    VALUES ($1::text, $2::integer, $3::interval, $4::integer, $5::interval, $6::jsonb)
+INSERT INTO __JOBS_TABLE__
+    (channel, priority, max_retries, retry_delay, args)
+    VALUES ($1::text, $2::integer, $3::integer, $4::interval, $5::jsonb)
 RETURNING id;
