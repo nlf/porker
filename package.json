@@ -3,11 +3,21 @@
   "version": "2.5.0",
   "description": "because it's a worker, but for postgres",
   "main": "lib/index.js",
+  "types": "lib/index.d.ts",
   "scripts": {
-    "test": "lab -a @hapi/code -t 100 -L"
+    "build": "npx tsc --build tsconfig.build.json",
+    "clean": "npx tsc --build --clean tsconfig.build.json",
+    "prepack": "npm run build",
+    "postpack": "npm run clean",
+    "lint": "eslint .",
+    "postlint": "npx tsc",
+    "test": "tap",
+    "posttest": "npm run lint"
   },
   "files": [
-    "lib"
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "lib/**/*.d.ts.map"
   ],
   "keywords": [
     "postgres",
@@ -25,11 +35,21 @@
     "url": "https://github.com/nlf/porker/issues"
   },
   "dependencies": {
-    "pg": "^7.18.1"
+    "pg": "^8.12.0"
   },
   "devDependencies": {
-    "@hapi/code": "^8.0.1",
-    "@hapi/lab": "^22.0.3",
-    "eslint": "^6.8.0"
+    "@eslint/js": "^9.9.1",
+    "@stylistic/eslint-plugin": "^2.6.4",
+    "@tsconfig/node20": "^20.1.4",
+    "@types/pg": "^8.11.8",
+    "eslint": "^9.9.1",
+    "globals": "^15.9.0",
+    "tap": "^21.0.1",
+    "typescript": "^5.5.4"
+  },
+  "tap": {
+    "bail": true,
+    "exclude": ["test/shared/**/*.js"],
+    "timeout": 3
   }
 }

@@ -1,0 +1,1 @@
+NOTIFY __JOBS_TABLE__;

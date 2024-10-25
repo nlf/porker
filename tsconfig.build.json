@@ -1,0 +1,14 @@
+{
+  "extends": "./node_modules/@tsconfig/node20/tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": true
+  },
+  "include": [
+    "bin/**/*.js",
+    "lib/**/*.js"
+  ]
+}

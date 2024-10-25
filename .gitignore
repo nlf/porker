@@ -1,3 +1,18 @@
-.DS_Store
-node_modules
-coverage.html
+# This file is managed by code-skeleton. Do not make changes.
+# ignore everything in the root
+/*
+
+# keep these
+!**/.gitignore
+!/.github/
+!/.npmrc
+!/bin/
+!/docker-compose.yml
+!/eslint.config.mjs
+!/lib/
+!/LICENSE*
+!/package.json
+!/README*
+!/tap-snapshots/
+!/test/
+!/tsconfig*.json

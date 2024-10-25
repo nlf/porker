@@ -1,0 +1,1 @@
+LISTEN __JOBS_TABLE__;
